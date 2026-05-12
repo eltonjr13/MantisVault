@@ -77,46 +77,42 @@ export class ChunkStorageService {
     }
 
     const now = new Date().toISOString();
-    const resultLocations = this.pools.transaction(() => {
-      const inserted = [];
+    const resultLocations = [];
 
-      for (const target of plan.targets) {
-        const existing = this.chunkLocations.find(input.chunkHash, target.location.id);
-        const record = existing ?? this.chunkLocations.create({
-          chunkHash: input.chunkHash,
-          poolId: pool.id,
-          locationId: target.location.id,
-          relativePath,
-          sizeBytes: input.encryptedBuffer.byteLength,
-          encryptedSizeBytes: input.encryptedBuffer.byteLength,
-          verifiedAt: now,
-          createdAt: now
-        });
-        inserted.push({
-          locationId: record.locationId,
-          relativePath: record.relativePath,
-          sizeBytes: record.sizeBytes
-        });
+    for (const target of plan.targets) {
+      const existing = this.chunkLocations.find(input.chunkHash, target.location.id);
+      const record = existing ?? this.chunkLocations.create({
+        chunkHash: input.chunkHash,
+        poolId: pool.id,
+        locationId: target.location.id,
+        relativePath,
+        sizeBytes: input.encryptedBuffer.byteLength,
+        encryptedSizeBytes: input.encryptedBuffer.byteLength,
+        verifiedAt: now,
+        createdAt: now
+      });
+      resultLocations.push({
+        locationId: record.locationId,
+        relativePath: record.relativePath,
+        sizeBytes: record.sizeBytes
+      });
+    }
+
+    const newBytesByLocation = new Map<string, number>();
+    for (const item of written) {
+      if (item.bytes > 0) {
+        newBytesByLocation.set(item.locationId, (newBytesByLocation.get(item.locationId) ?? 0) + item.bytes);
       }
+    }
 
-      const newBytesByLocation = new Map<string, number>();
-      for (const item of written) {
-        if (item.bytes > 0) {
-          newBytesByLocation.set(item.locationId, (newBytesByLocation.get(item.locationId) ?? 0) + item.bytes);
-        }
-      }
+    for (const [locationId, bytes] of newBytesByLocation) {
+      this.locations.incrementUsedBytes(locationId, bytes, now);
+    }
 
-      for (const [locationId, bytes] of newBytesByLocation) {
-        this.locations.incrementUsedBytes(locationId, bytes, now);
-      }
-
-      const uniqueNewBytes = written.some((item) => item.bytes > 0) ? input.encryptedBuffer.byteLength : 0;
-      if (uniqueNewBytes > 0) {
-        this.pools.incrementUsedBytes(pool.id, uniqueNewBytes, now);
-      }
-
-      return inserted;
-    });
+    const uniqueNewBytes = written.some((item) => item.bytes > 0) ? input.encryptedBuffer.byteLength : 0;
+    if (uniqueNewBytes > 0) {
+      this.pools.incrementUsedBytes(pool.id, uniqueNewBytes, now);
+    }
 
     return {
       chunkHash: input.chunkHash,

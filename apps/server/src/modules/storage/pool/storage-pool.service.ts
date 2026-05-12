@@ -92,31 +92,27 @@ export class StoragePoolService {
       warnings.push(...result.warnings);
     }
 
-    const pool = this.pools.transaction(() => {
-      const created = this.pools.create({
-        name: input.name.trim(),
-        mode: input.mode,
-        quotaBytes: input.quotaBytes,
-        reservedFreeBytes: input.reservedFreeBytes,
-        warningThresholdPercent: input.warningThresholdPercent ?? DEFAULT_WARNING_THRESHOLD_PERCENT,
-        criticalThresholdPercent: input.criticalThresholdPercent ?? DEFAULT_CRITICAL_THRESHOLD_PERCENT,
+    const pool = this.pools.create({
+      name: input.name.trim(),
+      mode: input.mode,
+      quotaBytes: input.quotaBytes,
+      reservedFreeBytes: input.reservedFreeBytes,
+      warningThresholdPercent: input.warningThresholdPercent ?? DEFAULT_WARNING_THRESHOLD_PERCENT,
+      criticalThresholdPercent: input.criticalThresholdPercent ?? DEFAULT_CRITICAL_THRESHOLD_PERCENT,
+      now
+    });
+
+    validated.forEach((location, index) => {
+      this.locations.create({
+        poolId: pool.id,
+        label: location.label.trim(),
+        rootPath: location.rootPath,
+        quotaBytes: location.quotaBytes,
+        reservedFreeBytes: location.reservedFreeBytes,
+        priority: input.locations.length - index,
+        isSystemDrive: location.isSystemDrive,
         now
       });
-
-      validated.forEach((location, index) => {
-        this.locations.create({
-          poolId: created.id,
-          label: location.label.trim(),
-          rootPath: location.rootPath,
-          quotaBytes: location.quotaBytes,
-          reservedFreeBytes: location.reservedFreeBytes,
-          priority: input.locations.length - index,
-          isSystemDrive: location.isSystemDrive,
-          now
-        });
-      });
-
-      return created;
     });
 
     return {
