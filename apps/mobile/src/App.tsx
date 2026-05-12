@@ -1065,6 +1065,351 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
   );
 }
 
+function StoragePanel(props: { pairing?: PairPayload }) {
+  const [pools, setPools] = useState<StoragePool[]>([]);
+  const [selectedPoolId, setSelectedPoolId] = useState<string | undefined>();
+  const [usage, setUsage] = useState<StorageUsage | undefined>();
+  const [locations, setLocations] = useState<StorageUsage["locations"]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [notice, setNotice] = useState<string | undefined>();
+  const [plan, setPlan] = useState<string | undefined>();
+  const [form, setForm] = useState({
+    name: "MantisVault Vault",
+    mode: "single" as StoragePoolMode,
+    rootPath: "D:/MantisVaultPool",
+    quotaGb: 100,
+    reservedGb: 20
+  });
+  const [locationForm, setLocationForm] = useState({
+    label: "Novo Disco",
+    rootPath: "E:/MantisVaultPool",
+    quotaGb: 100,
+    reservedGb: 20
+  });
+
+  const selectedPool = useMemo(
+    () => pools.find((pool) => pool.id === selectedPoolId) ?? pools[0],
+    [pools, selectedPoolId]
+  );
+
+  async function refresh(nextPoolId = selectedPool?.id) {
+    if (!props.pairing) {
+      return;
+    }
+
+    setError(undefined);
+
+    try {
+      const nextPools = await listStoragePools(props.pairing);
+      setPools(nextPools);
+      const poolId = nextPoolId ?? nextPools[0]?.id;
+      setSelectedPoolId(poolId);
+
+      if (poolId) {
+        const [details, nextUsage] = await Promise.all([
+          getStoragePool(props.pairing, poolId),
+          getStorageUsage(props.pairing, poolId)
+        ]);
+        setUsage(nextUsage);
+        setLocations(details.locations.map((location) => ({
+          location,
+          availableBytes: Math.max(0, location.quotaBytes - location.usedBytes - location.reservedFreeBytes),
+          usedPercent: location.quotaBytes > 0 ? Math.min(100, (location.usedBytes / location.quotaBytes) * 100) : 0
+        })));
+      } else {
+        setUsage(undefined);
+        setLocations([]);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Nao foi possivel carregar armazenamento.");
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, [props.pairing?.baseUrl, props.pairing?.token]);
+
+  async function run(action: () => Promise<void>) {
+    if (!props.pairing) {
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    setNotice(undefined);
+    setPlan(undefined);
+
+    try {
+      await action();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Operacao falhou.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createPool() {
+    if (!props.pairing) {
+      return;
+    }
+
+    const body: CreateStoragePoolRequest = {
+      name: form.name,
+      mode: form.mode,
+      quotaBytes: gbToBytes(form.quotaGb),
+      reservedFreeBytes: gbToBytes(form.reservedGb),
+      warningThresholdPercent: 80,
+      criticalThresholdPercent: 95,
+      locations: [{
+        label: "Disco Principal",
+        rootPath: form.rootPath,
+        quotaBytes: gbToBytes(form.quotaGb),
+        reservedFreeBytes: gbToBytes(form.reservedGb)
+      }]
+    };
+    const created = await createStoragePool(props.pairing, body);
+    setNotice(created.warnings[0] ?? "Storage pool criado.");
+    await refresh(created.pool.id);
+  }
+
+  async function addLocation() {
+    if (!props.pairing || !selectedPool) {
+      return;
+    }
+
+    const result = await addStorageLocation(props.pairing, selectedPool.id, {
+      label: locationForm.label,
+      rootPath: locationForm.rootPath,
+      quotaBytes: gbToBytes(locationForm.quotaGb),
+      reservedFreeBytes: gbToBytes(locationForm.reservedGb)
+    });
+    setNotice(result.warnings[0] ?? "Location adicionada.");
+    await refresh(selectedPool.id);
+  }
+
+  const modes: Array<{ mode: StoragePoolMode; title: string; text: string }> = [
+    { mode: "single", title: "Pasta Unica", text: "Use uma pasta ou disco para armazenar o cofre. Ideal para comecar." },
+    { mode: "pooled-capacity", title: "Capacidade Maxima", text: "Une varios discos em um cofre logico maior. Usa mais espaco, mas nao duplica dados." },
+    { mode: "mirrored", title: "Protecao", text: "Salva copias dos chunks em dois discos diferentes. Reduz a capacidade util, mas aumenta a seguranca." },
+    { mode: "hybrid", title: "Smart Pool", text: "Distribuicao inteligente por importancia do arquivo. Em breve." }
+  ];
+
+  return (
+    <section className="panel storage-panel">
+      <div className="panel-heading">
+        <HardDrive size={22} />
+        <div>
+          <h2>Armazenamento</h2>
+          <p>Storage Pool local com quota, reserva livre e locations por chunk.</p>
+        </div>
+      </div>
+
+      {!props.pairing && <p className="notice-line">Pareamento necessario para configurar armazenamento.</p>}
+
+      {selectedPool && usage && (
+        <>
+          <div className="storage-overview">
+            <div>
+              <span>MantisVault Vault</span>
+              <strong>{formatBytes(usage.usefulCapacityBytes)} disponiveis</strong>
+              <small>{modeTitle(selectedPool.mode)} - {selectedPool.status}</small>
+            </div>
+            <StorageHealthBadge status={selectedPool.status} />
+          </div>
+          <StorageUsageBar percent={usage.usedPercent} />
+          <div className="stats-grid">
+            <div><span>Usado</span><strong>{formatBytes(selectedPool.usedBytes)}</strong></div>
+            <div><span>Quota</span><strong>{formatBytes(selectedPool.quotaBytes)}</strong></div>
+            <div><span>Disponivel</span><strong>{formatBytes(usage.availableBytes)}</strong></div>
+            <div><span>Reserva</span><strong>{formatBytes(selectedPool.reservedFreeBytes)}</strong></div>
+          </div>
+        </>
+      )}
+
+      <div className="mode-grid">
+        {modes.map((item) => (
+          <button
+            className={selectedPool?.mode === item.mode || form.mode === item.mode ? "mode-card active" : "mode-card"}
+            type="button"
+            key={item.mode}
+            disabled={item.mode === "hybrid" || busy}
+            onClick={() => {
+              setForm((current) => ({ ...current, mode: item.mode }));
+              if (props.pairing && selectedPool) {
+                void run(async () => {
+                  await updateStoragePool(props.pairing!, selectedPool.id, { mode: item.mode });
+                  await refresh(selectedPool.id);
+                });
+              }
+            }}
+          >
+            <Database size={20} />
+            <strong>{item.title}</strong>
+            <span>{item.text}</span>
+          </button>
+        ))}
+      </div>
+
+      {usage?.alerts.length ? <StorageWarningsPanel alerts={usage.alerts} /> : null}
+
+      <div className="location-list">
+        {locations.map((item) => (
+          <article className="location-card" key={item.location.id}>
+            <div>
+              <HardDrive size={20} />
+              <div>
+                <strong>{item.location.label}</strong>
+                <span>{item.location.rootPath}</span>
+              </div>
+            </div>
+            <StorageUsageBar percent={item.usedPercent} />
+            <div className="location-meta">
+              <span>{formatBytes(item.location.usedBytes)} usados</span>
+              <span>{formatBytes(item.availableBytes)} disponiveis</span>
+              <StorageLocationBadge status={item.location.status} />
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <form
+        className="storage-builder"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void run(createPool);
+        }}
+      >
+        <label>
+          Nome do pool
+          <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+        </label>
+        <label>
+          Pasta principal
+          <input value={form.rootPath} onChange={(event) => setForm((current) => ({ ...current, rootPath: event.target.value }))} />
+        </label>
+        <StorageQuotaSlider label="Quota do cofre" value={form.quotaGb} onChange={(quotaGb) => setForm((current) => ({ ...current, quotaGb }))} />
+        <StorageQuotaSlider label="Reserva livre" value={form.reservedGb} min={1} max={200} onChange={(reservedGb) => setForm((current) => ({ ...current, reservedGb }))} />
+        <button className="primary-button" type="submit" disabled={!props.pairing || busy}>
+          <Plus size={18} />
+          Criar pool
+        </button>
+      </form>
+
+      {selectedPool && (
+        <form
+          className="storage-builder"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void run(addLocation);
+          }}
+        >
+          <label>
+            Label
+            <input value={locationForm.label} onChange={(event) => setLocationForm((current) => ({ ...current, label: event.target.value }))} />
+          </label>
+          <label>
+            Nova location
+            <input value={locationForm.rootPath} onChange={(event) => setLocationForm((current) => ({ ...current, rootPath: event.target.value }))} />
+          </label>
+          <StorageQuotaSlider label="Quota da location" value={locationForm.quotaGb} onChange={(quotaGb) => setLocationForm((current) => ({ ...current, quotaGb }))} />
+          <button className="ghost-button" type="submit" disabled={!props.pairing || busy}>
+            <Plus size={18} />
+            Adicionar disco
+          </button>
+        </form>
+      )}
+
+      <div className="queue-actions">
+        <button className="ghost-button" type="button" disabled={!selectedPool || busy} onClick={() => void refresh(selectedPool?.id)}>
+          <RefreshCcw size={18} />
+          Atualizar
+        </button>
+        <button
+          className="ghost-button"
+          type="button"
+          disabled={!props.pairing || !selectedPool || busy}
+          onClick={() => void run(async () => {
+            if (!props.pairing || !selectedPool) return;
+            const result = await checkStorageHealth(props.pairing, selectedPool.id);
+            setNotice(`Health: ${result.pool.status}`);
+            await refresh(selectedPool.id);
+          })}
+        >
+          <Activity size={18} />
+          Health
+        </button>
+        <button
+          className="ghost-button"
+          type="button"
+          disabled={!props.pairing || !selectedPool || busy}
+          onClick={() => void run(async () => {
+            if (!props.pairing || !selectedPool) return;
+            setPlan(JSON.stringify(await planStorageRebalance(props.pairing, selectedPool.id), null, 2));
+          })}
+        >
+          <Database size={18} />
+          Plano rebalance
+        </button>
+      </div>
+
+      {notice && <p className="notice-line">{notice}</p>}
+      {error && <p className="error-line">{error}</p>}
+      {plan && <pre className="rebalance-plan">{plan}</pre>}
+    </section>
+  );
+}
+
+function StorageQuotaSlider(props: { label: string; value: number; min?: number; max?: number; onChange: (value: number) => void }) {
+  return (
+    <label>
+      {props.label}: {props.value} GB
+      <input
+        type="range"
+        min={props.min ?? 10}
+        max={props.max ?? 2048}
+        step={1}
+        value={props.value}
+        onChange={(event) => props.onChange(Number(event.target.value))}
+      />
+    </label>
+  );
+}
+
+function StorageUsageBar(props: { percent: number }) {
+  return (
+    <div className="progress-track large">
+      <span style={{ width: `${Math.min(100, Math.max(0, props.percent))}%` }} />
+    </div>
+  );
+}
+
+function StorageHealthBadge(props: { status: string }) {
+  return (
+    <span className={`storage-badge ${props.status}`}>
+      <Activity size={16} />
+      {props.status}
+    </span>
+  );
+}
+
+function StorageLocationBadge(props: { status: string }) {
+  return <span className={`storage-badge ${props.status}`}>{props.status}</span>;
+}
+
+function StorageWarningsPanel(props: { alerts: StorageUsage["alerts"] }) {
+  return (
+    <div className="storage-warnings">
+      {props.alerts.map((alert) => (
+        <p key={`${alert.code}-${alert.locationId ?? "pool"}`}>
+          <AlertTriangle size={16} />
+          {alert.message}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function CompressionSummary(props: {
   summary: {
     originalSize: number;
@@ -1120,6 +1465,21 @@ function formatBytes(value: number): string {
   }
 
   return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function gbToBytes(value: number): number {
+  return Math.max(0, Math.round(value)) * 1024 * 1024 * 1024;
+}
+
+function modeTitle(mode: StoragePoolMode): string {
+  const labels: Record<StoragePoolMode, string> = {
+    single: "Pasta Unica",
+    "pooled-capacity": "Capacidade Maxima",
+    mirrored: "Protecao",
+    hybrid: "Smart Pool"
+  };
+
+  return labels[mode];
 }
 
 function calculateReductionPercent(originalSize: number, compressedSize: number): number {
