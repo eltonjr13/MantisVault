@@ -1,0 +1,28 @@
+{
+  "name": "@kazvault/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "start:dist": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@kazvault/shared": "workspace:*",
+    "fastify": "^4.29.0",
+    "qrcode": "^1.5.4",
+    "sql.js": "^1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/qrcode": "^1.5.5",
+    "@types/sql.js": "^1.4.9",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-types/
+.DS_Store
+*.log
+.vite/
+android/
+ios/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.env
+.env.*
+!.env.example
+.tmp-storage/

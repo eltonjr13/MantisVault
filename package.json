@@ -1,0 +1,17 @@
+{
+  "name": "kazvault",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev:server": "corepack pnpm --filter @kazvault/server dev",
+    "dev:mobile": "corepack pnpm --filter @kazvault/mobile dev --host 0.0.0.0",
+    "build": "corepack pnpm -r build",
+    "typecheck": "corepack pnpm --filter @kazvault/shared build && corepack pnpm --filter @kazvault/crypto build && corepack pnpm --filter @kazvault/compression build && corepack pnpm -r typecheck",
+    "android": "corepack pnpm --filter @kazvault/mobile android"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
