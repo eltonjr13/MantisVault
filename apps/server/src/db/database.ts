@@ -73,11 +73,14 @@ export class VaultDatabase {
         total_chunks INTEGER NOT NULL,
         encrypted_bytes INTEGER NOT NULL,
         manifest_sha256 TEXT NOT NULL,
+        storage_dir TEXT,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
         completed_at TEXT
       );
     `);
+
+    this.ensureColumn("files", "storage_dir", "TEXT");
 
     this.db.run(`
       CREATE TABLE IF NOT EXISTS uploads (
@@ -96,5 +99,14 @@ export class VaultDatabase {
 
   private persist(): void {
     writeFileSync(this.dbPath, Buffer.from(this.db.export()));
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.all<{ name: string }>(`PRAGMA table_info(${table})`);
+
+    if (!columns.some((item) => item.name === column)) {
+      this.db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      this.persist();
+    }
   }
 }

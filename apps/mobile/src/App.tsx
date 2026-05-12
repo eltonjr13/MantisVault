@@ -28,10 +28,12 @@ import {
   confirmPairing,
   deleteFile,
   fetchPairPayload,
+  getVaultSettings,
   getRemoteVaultKeyring,
   getVaultStats,
   listFiles,
   saveRemoteVaultKeyring,
+  updateVaultSettings,
   type RemoteVaultKeyring
 } from "./services/serverClient";
 import {
@@ -776,6 +778,8 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
   const [error, setError] = useState<string | undefined>();
   const [downloads, setDownloads] = useState<Record<string, { progress: number; detail: string }>>({});
   const [metadata, setMetadata] = useState<Record<string, VaultFileMetadata>>({});
+  const [storageInput, setStorageInput] = useState("");
+  const [settingsBusy, setSettingsBusy] = useState(false);
 
   const canLoad = Boolean(props.pairing);
   const canDownload = Boolean(props.pairing && props.masterKey);
@@ -788,9 +792,14 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
     setError(undefined);
 
     try {
-      const [nextStats, nextFiles] = await Promise.all([getVaultStats(props.pairing), listFiles(props.pairing)]);
+      const [nextStats, nextFiles, settings] = await Promise.all([
+        getVaultStats(props.pairing),
+        listFiles(props.pairing),
+        getVaultSettings(props.pairing)
+      ]);
       setStats(nextStats);
       setFiles(nextFiles);
+      setStorageInput(settings.storageDir);
 
       if (props.masterKey) {
         const entries = await Promise.all(
@@ -823,12 +832,32 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
   }, [props.pairing?.baseUrl, props.pairing?.token, props.masterKey]);
 
   const usedPercent = useMemo(() => {
-    if (!stats || stats.limitBytes === 0) {
+    const total = stats?.diskTotalBytes ?? stats?.limitBytes ?? 0;
+
+    if (!stats || total === 0) {
       return 0;
     }
 
-    return Math.min(100, (stats.usedBytes / stats.limitBytes) * 100);
+    return Math.min(100, (stats.usedBytes / total) * 100);
   }, [stats]);
+
+  async function saveStorageSettings(): Promise<void> {
+    if (!props.pairing) {
+      return;
+    }
+
+    setSettingsBusy(true);
+    setError(undefined);
+
+    try {
+      await updateVaultSettings(props.pairing, { storageDir: storageInput });
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao atualizar armazenamento.");
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
 
   async function restoreFile(file: VaultFileRecord): Promise<void> {
     if (!props.pairing || !props.masterKey) {
@@ -886,12 +915,16 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
       {stats && (
         <div className="stats-grid">
           <div>
-            <span>Uso</span>
+            <span>Cofre</span>
             <strong>{formatBytes(stats.usedBytes)}</strong>
           </div>
           <div>
-            <span>Limite</span>
-            <strong>{formatBytes(stats.limitBytes)}</strong>
+            <span>Disco</span>
+            <strong>{formatBytes(stats.diskTotalBytes ?? stats.limitBytes)}</strong>
+          </div>
+          <div>
+            <span>Livre</span>
+            <strong>{formatBytes(stats.diskFreeBytes ?? stats.remainingBytes)}</strong>
           </div>
           <div>
             <span>Arquivos</span>
@@ -904,6 +937,29 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
         <div className="progress-track large">
           <span style={{ width: `${usedPercent}%` }} />
         </div>
+      )}
+
+      {canLoad && (
+        <form
+          className="storage-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveStorageSettings();
+          }}
+        >
+          <label>
+            Pasta de armazenamento no PC
+            <input
+              value={storageInput}
+              onChange={(event) => setStorageInput(event.target.value)}
+              placeholder="E:/cloudkz"
+            />
+          </label>
+          <button className="ghost-button" type="submit" disabled={settingsBusy || !storageInput.trim()}>
+            <Settings size={18} />
+            Salvar pasta
+          </button>
+        </form>
       )}
 
       <button className="ghost-button" type="button" disabled={!canLoad} onClick={() => void refresh()}>

@@ -86,6 +86,7 @@ export interface FileManifestPlaintext {
 export interface VaultFileRecord {
   id: string;
   uploadId?: string;
+  storageDir?: string;
   totalChunks: number;
   encryptedBytes: number;
   status: "pending" | "completed";
@@ -105,5 +106,12 @@ export interface VaultStats {
   limitBytes: number;
   usedBytes: number;
   remainingBytes: number;
+  diskTotalBytes?: number;
+  diskFreeBytes?: number;
+  diskUsedBytes?: number;
   fileCount: number;
+}
+
+export interface VaultSettings {
+  storageDir: string;
 }

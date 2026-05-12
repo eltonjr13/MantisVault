@@ -6,6 +6,7 @@ import type {
   UploadInitResponse,
   VaultFileManifestResponse,
   VaultFileRecord,
+  VaultSettings,
   VaultStats
 } from "@kazvault/shared";
 
@@ -80,6 +81,19 @@ export async function completeUpload(pairing: PairPayload, uploadId: string): Pr
 export async function getVaultStats(pairing: PairPayload): Promise<VaultStats> {
   return requestJson<VaultStats>(pairing, "/api/vault/stats", {
     method: "GET"
+  });
+}
+
+export async function getVaultSettings(pairing: PairPayload): Promise<VaultSettings> {
+  return requestJson<VaultSettings>(pairing, "/api/vault/settings", {
+    method: "GET"
+  });
+}
+
+export async function updateVaultSettings(pairing: PairPayload, settings: VaultSettings): Promise<VaultSettings> {
+  return requestJson<VaultSettings>(pairing, "/api/vault/settings", {
+    method: "PUT",
+    body: JSON.stringify(settings)
   });
 }
 

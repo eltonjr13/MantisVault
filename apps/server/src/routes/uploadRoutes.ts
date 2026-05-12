@@ -62,6 +62,7 @@ export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRou
       totalChunks: body.totalChunks,
       encryptedBytes: body.expectedEncryptedBytes,
       manifestSha256: body.manifestSha256,
+      storageDir: deps.storage.storageDir,
       createdAt: now
     });
     deps.uploadsRepository.create({
@@ -113,7 +114,8 @@ export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRou
         return reply.code(400).send({ error: "CHUNK_HASH_MISMATCH" });
       }
 
-      await deps.storage.writeEncryptedChunk(upload.fileId, index, body);
+      const file = deps.filesRepository.find(upload.fileId);
+      await deps.storage.writeEncryptedChunk(upload.fileId, index, body, file?.storageDir);
       const updated = deps.uploadsRepository.markChunkReceived(upload.id, index, new Date().toISOString());
 
       const response: UploadChunkResponse = {
@@ -139,7 +141,8 @@ export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRou
       const missingChunks: number[] = [];
 
       for (let index = 0; index < upload.totalChunks; index += 1) {
-        if (!(await deps.storage.chunkExists(upload.fileId, index))) {
+        const file = deps.filesRepository.find(upload.fileId);
+        if (!(await deps.storage.chunkExists(upload.fileId, index, file?.storageDir))) {
           missingChunks.push(index);
         }
       }

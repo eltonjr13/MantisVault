@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { VaultFileManifestResponse, VaultStats } from "@kazvault/shared";
+import type { VaultFileManifestResponse, VaultSettings, VaultStats } from "@kazvault/shared";
 import type { FilesRepository } from "../repositories/filesRepository";
 import type { UploadsRepository } from "../repositories/uploadsRepository";
 import type { StorageService } from "../services/storageService";
@@ -7,6 +7,8 @@ import type { ServerConfig } from "../config/config";
 import type { PairingService } from "../services/pairingService";
 import type { LogService } from "../services/logService";
 import { requirePairToken } from "./auth";
+import { saveStorageDirSetting } from "../config/config";
+import { isAbsolute } from "node:path";
 
 interface VaultRouteDeps {
   config: ServerConfig;
@@ -22,12 +24,51 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
 
   app.get("/api/vault/stats", { preHandler: auth }, async () => {
     const usedBytes = await deps.storage.getUsedBytes();
+    const disk = await deps.storage.getDiskStats();
     const response: VaultStats = {
       storageDir: deps.storage.storageDir,
       limitBytes: deps.config.spaceLimitBytes,
       usedBytes,
       remainingBytes: Math.max(0, deps.config.spaceLimitBytes - usedBytes),
+      diskTotalBytes: disk?.totalBytes,
+      diskFreeBytes: disk?.freeBytes,
+      diskUsedBytes: disk?.usedBytes,
       fileCount: deps.filesRepository.countCompleted()
+    };
+
+    return response;
+  });
+
+  app.get("/api/vault/settings", { preHandler: auth }, async () => {
+    const response: VaultSettings = {
+      storageDir: deps.storage.storageDir
+    };
+
+    return response;
+  });
+
+  app.put<{ Body: Partial<VaultSettings> }>("/api/vault/settings", { preHandler: auth }, async (request, reply) => {
+    const storageDir = request.body.storageDir?.trim();
+
+    if (!storageDir) {
+      return reply.code(400).send({ error: "INVALID_STORAGE_DIR", message: "Pasta de armazenamento ausente." });
+    }
+
+    if (!isAbsolute(storageDir)) {
+      return reply.code(400).send({ error: "INVALID_STORAGE_DIR", message: "Use um caminho absoluto, como E:/cloudkz." });
+    }
+
+    try {
+      await deps.storage.updateStorageDir(storageDir);
+    } catch {
+      return reply.code(400).send({ error: "INVALID_STORAGE_DIR", message: "Nao foi possivel criar ou acessar esta pasta." });
+    }
+
+    saveStorageDirSetting(deps.config.settingsPath, storageDir);
+    await deps.log.info("vault_storage_dir_updated", { storageDir });
+
+    const response: VaultSettings = {
+      storageDir: deps.storage.storageDir
     };
 
     return response;
@@ -54,7 +95,7 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
     }
 
     const upload = deps.uploadsRepository.findByFileId(file.id);
-    const manifest = await deps.storage.readEncryptedManifest(file.id);
+    const manifest = await deps.storage.readEncryptedManifest(file.id, file.storageDir);
 
     if (!upload || !manifest) {
       return reply.code(404).send({ error: "FILE_DOWNLOAD_DATA_NOT_FOUND" });
@@ -85,7 +126,7 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
         return reply.code(409).send({ error: "FILE_NOT_COMPLETED" });
       }
 
-      const chunk = await deps.storage.readEncryptedChunk(file.id, index);
+      const chunk = await deps.storage.readEncryptedChunk(file.id, index, file.storageDir);
 
       if (!chunk) {
         return reply.code(404).send({ error: "CHUNK_NOT_FOUND" });
@@ -127,7 +168,7 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
       return reply.code(404).send({ error: "FILE_NOT_FOUND" });
     }
 
-    await deps.storage.deleteFile(file.id);
+    await deps.storage.deleteFile(file.id, file.storageDir);
     deps.uploadsRepository.deleteByFile(file.id);
     deps.filesRepository.delete(file.id);
     await deps.log.info("file_deleted", { fileId: file.id });

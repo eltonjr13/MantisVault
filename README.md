@@ -45,6 +45,8 @@ Por padrao o servidor usa:
 - limite: `1TB`
 
 Configure por variaveis de ambiente usando `.env.example` como referencia. O servidor cria `files`, `logs` e metadados internos dentro da pasta configurada.
+Tambem e possivel trocar a pasta pela aba Cofre do app usando um caminho absoluto do PC, por exemplo `E:/cloudkz` ou `D:/KazVault`.
+O app mostra o tamanho real do disco, espaco livre e uso do cofre quando o servidor consegue ler essas informacoes do sistema.
 
 ## Rodar app mobile em desenvolvimento
 
@@ -88,6 +90,8 @@ O QR Code da tela `/pair` e temporario, atualiza automaticamente a cada 2 minuto
 - `GET /api/vault/stats`
 - `GET /api/vault/keyring`
 - `PUT /api/vault/keyring`
+- `GET /api/vault/settings`
+- `PUT /api/vault/settings`
 - `GET /api/files`
 - `GET /api/files/:fileId/manifest`
 - `GET /api/files/:fileId/chunks/:index`

@@ -13,7 +13,7 @@ import { StorageService } from "./services/storageService";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const storage = new StorageService(config.storageDir);
+  const storage = new StorageService(config.storageDir, config.appDataDir);
   await storage.init();
 
   const log = new LogService(storage.logPath);
@@ -22,6 +22,7 @@ async function main(): Promise<void> {
 
   const filesRepository = new FilesRepository(db);
   const uploadsRepository = new UploadsRepository(db);
+  filesRepository.backfillStorageDir(storage.storageDir);
   const pairingService = new PairingService(config, storage);
 
   const app = Fastify({
