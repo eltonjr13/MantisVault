@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   CheckCircle2,
+  Copy,
   FileUp,
   KeyRound,
   Pause,
@@ -58,7 +59,13 @@ interface QueueItem {
 }
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<Tab>(hasKeyring() ? "pair" : "security");
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    if (!hasKeyring()) {
+      return "security";
+    }
+
+    return hasDeviceUnlock() ? "pair" : "security";
+  });
   const [pairing, setPairing] = useState<PairPayload | undefined>(() => loadPairing());
   const [masterKey, setMasterKey] = useState<Uint8Array | undefined>();
   const [keyringExists, setKeyringExists] = useState(() => hasKeyring());
@@ -99,29 +106,6 @@ export function App() {
     return { key: created.masterKey, created: true };
   }
 
-  async function handlePairing(payload: PairPayload): Promise<void> {
-    updatePairing(payload);
-    await confirmPairing(payload).catch(() => undefined);
-
-    if (!hasKeyring()) {
-      const remoteKeyring = await getRemoteVaultKeyring(payload);
-
-      if (remoteKeyring) {
-        setPendingRemoteKeyring(remoteKeyring);
-        setActiveTab("security");
-        return;
-      }
-    }
-
-    const result = await ensureLocalVault();
-
-    if (result.created) {
-      await saveRemoteVaultKeyring(payload, getRecoveryKeyPackage()).catch(() => undefined);
-    }
-
-    setActiveTab("upload");
-  }
-
   async function recoverVault(recovery: string): Promise<void> {
     const key = pendingRemoteKeyring
       ? await importRecoveryKeyPackage(pendingRemoteKeyring, recovery)
@@ -131,6 +115,20 @@ export function App() {
     setKeyringExists(true);
     setPendingRemoteKeyring(undefined);
     setActiveTab(pairing ? "upload" : "pair");
+  }
+
+  async function createNewVaultAccess(): Promise<void> {
+    const created = await createAutomaticKeyring();
+    setMasterKey(created.masterKey);
+    setRecoveryKey(created.recoveryKey);
+    setKeyringExists(true);
+    setPendingRemoteKeyring(undefined);
+
+    if (pairing) {
+      await saveRemoteVaultKeyring(pairing, getRecoveryKeyPackage()).catch(() => undefined);
+    }
+
+    setActiveTab("security");
   }
 
   const handlePairingCallback = useCallback(async (payload: PairPayload): Promise<void> => {
@@ -153,7 +151,7 @@ export function App() {
       await saveRemoteVaultKeyring(payload, getRecoveryKeyPackage()).catch(() => undefined);
     }
 
-    setActiveTab("upload");
+    setActiveTab(result.created ? "security" : "upload");
   }, [masterKey]);
 
   useEffect(() => {
@@ -164,7 +162,7 @@ export function App() {
           setKeyringExists(true);
           setActiveTab(loadPairing() ? "upload" : "pair");
         })
-        .catch(() => undefined);
+        .catch(() => setActiveTab("security"));
     }
   }, []);
 
@@ -268,6 +266,7 @@ export function App() {
           recoveryKey={recoveryKey}
           remoteRestoreAvailable={Boolean(pendingRemoteKeyring)}
           onRecovered={recoverVault}
+          onResetVault={createNewVaultAccess}
         />
       )}
 
@@ -305,11 +304,14 @@ function SecurityPanel(props: {
   recoveryKey?: string;
   remoteRestoreAvailable: boolean;
   onRecovered: (recoveryKey: string) => Promise<void>;
+  onResetVault: () => Promise<void>;
 }) {
   const [recovery, setRecovery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [copyLabel, setCopyLabel] = useState("Copiar chave");
   const stored = getStoredKeyring();
+  const canCreateNewAccess = !props.masterKey && (props.keyringExists || props.remoteRestoreAvailable);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -367,6 +369,31 @@ function SecurityPanel(props: {
         </div>
       )}
 
+      {canCreateNewAccess && (
+        <div className="warning-box">
+          <strong>Nao tenho a chave de recuperacao</strong>
+          <p>
+            Crie uma nova chave para liberar novos uploads neste dispositivo. Arquivos antigos continuam criptografados
+            pela chave perdida.
+          </p>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (!window.confirm("Criar uma nova chave? Arquivos antigos nao serao recuperados sem a chave anterior.")) {
+                return;
+              }
+
+              void run(props.onResetVault);
+            }}
+          >
+            <RefreshCcw size={18} />
+            Criar nova chave
+          </button>
+        </div>
+      )}
+
       {props.masterKey && (
         <div className="secure-state">
           <CheckCircle2 size={22} />
@@ -382,6 +409,22 @@ function SecurityPanel(props: {
           <span>Chave de recuperacao</span>
           <code>{props.recoveryKey}</code>
           <p>Guarde esta chave para recuperacao e futuros dispositivos. Se ela for perdida, os arquivos nao poderao ser restaurados.</p>
+          <button
+            className="ghost-button compact"
+            type="button"
+            onClick={() => {
+              void navigator.clipboard
+                .writeText(props.recoveryKey ?? "")
+                .then(() => {
+                  setCopyLabel("Copiada");
+                  window.setTimeout(() => setCopyLabel("Copiar chave"), 1800);
+                })
+                .catch(() => setError("Nao foi possivel copiar automaticamente. Selecione a chave e copie manualmente."));
+            }}
+          >
+            <Copy size={16} />
+            {copyLabel}
+          </button>
         </div>
       )}
 
