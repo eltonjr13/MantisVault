@@ -85,11 +85,19 @@ export interface FileManifestPlaintext {
 
 export interface VaultFileRecord {
   id: string;
+  uploadId?: string;
   totalChunks: number;
   encryptedBytes: number;
   status: "pending" | "completed";
   createdAt: string;
   completedAt?: string;
+}
+
+export interface VaultFileManifestResponse {
+  fileId: string;
+  uploadId: string;
+  totalChunks: number;
+  encryptedManifestBase64: string;
 }
 
 export interface VaultStats {

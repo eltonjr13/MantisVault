@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { VaultStats } from "@kazvault/shared";
+import type { VaultFileManifestResponse, VaultStats } from "@kazvault/shared";
 import type { FilesRepository } from "../repositories/filesRepository";
 import type { UploadsRepository } from "../repositories/uploadsRepository";
 import type { StorageService } from "../services/storageService";
@@ -35,9 +35,65 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
 
   app.get("/api/files", { preHandler: auth }, async () => {
     return {
-      files: deps.filesRepository.list()
+      files: deps.filesRepository.list().map((file) => ({
+        ...file,
+        uploadId: deps.uploadsRepository.findByFileId(file.id)?.id
+      }))
     };
   });
+
+  app.get<{ Params: { fileId: string } }>("/api/files/:fileId/manifest", { preHandler: auth }, async (request, reply) => {
+    const file = deps.filesRepository.find(request.params.fileId);
+
+    if (!file) {
+      return reply.code(404).send({ error: "FILE_NOT_FOUND" });
+    }
+
+    if (file.status !== "completed") {
+      return reply.code(409).send({ error: "FILE_NOT_COMPLETED" });
+    }
+
+    const upload = deps.uploadsRepository.findByFileId(file.id);
+    const manifest = await deps.storage.readEncryptedManifest(file.id);
+
+    if (!upload || !manifest) {
+      return reply.code(404).send({ error: "FILE_DOWNLOAD_DATA_NOT_FOUND" });
+    }
+
+    const response: VaultFileManifestResponse = {
+      fileId: file.id,
+      uploadId: upload.id,
+      totalChunks: file.totalChunks,
+      encryptedManifestBase64: manifest.toString("base64")
+    };
+
+    return response;
+  });
+
+  app.get<{ Params: { fileId: string; index: string } }>(
+    "/api/files/:fileId/chunks/:index",
+    { preHandler: auth },
+    async (request, reply) => {
+      const file = deps.filesRepository.find(request.params.fileId);
+      const index = Number(request.params.index);
+
+      if (!file || !Number.isInteger(index) || index < 0 || index >= file.totalChunks) {
+        return reply.code(404).send({ error: "FILE_OR_CHUNK_NOT_FOUND" });
+      }
+
+      if (file.status !== "completed") {
+        return reply.code(409).send({ error: "FILE_NOT_COMPLETED" });
+      }
+
+      const chunk = await deps.storage.readEncryptedChunk(file.id, index);
+
+      if (!chunk) {
+        return reply.code(404).send({ error: "CHUNK_NOT_FOUND" });
+      }
+
+      return reply.header("content-type", "application/octet-stream").send(chunk);
+    }
+  );
 
   app.get("/api/vault/keyring", { preHandler: auth }, async (_request, reply) => {
     const keyring = await deps.storage.readKeyring();

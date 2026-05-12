@@ -70,6 +70,7 @@ O comando `pnpm android` sincroniza o build web com Capacitor e abre o projeto A
 5. Selecione arquivos.
 6. O app comprime, criptografa, divide em chunks e envia para o servidor.
 7. O servidor grava somente `manifest.enc` e chunks criptografados.
+8. Para recuperar, abra a aba Cofre no app, toque em baixar e o app descriptografa, descomprime e salva o arquivo original.
 
 O QR Code da tela `/pair` e temporario, atualiza automaticamente a cada 2 minutos e para de atualizar quando o celular confirma o pareamento.
 
@@ -88,6 +89,8 @@ O QR Code da tela `/pair` e temporario, atualiza automaticamente a cada 2 minuto
 - `GET /api/vault/keyring`
 - `PUT /api/vault/keyring`
 - `GET /api/files`
+- `GET /api/files/:fileId/manifest`
+- `GET /api/files/:fileId/chunks/:index`
 - `DELETE /api/files/:fileId`
 
 ## Seguranca

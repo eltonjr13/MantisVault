@@ -52,9 +52,25 @@ export class StorageService {
     await writeFile(this.getManifestPath(fileId), bytes);
   }
 
+  async readEncryptedManifest(fileId: string): Promise<Buffer | undefined> {
+    if (!existsSync(this.getManifestPath(fileId))) {
+      return undefined;
+    }
+
+    return readFile(this.getManifestPath(fileId));
+  }
+
   async writeEncryptedChunk(fileId: string, index: number, bytes: Uint8Array): Promise<void> {
     await this.prepareFile(fileId);
     await writeFile(this.getChunkPath(fileId, index), bytes);
+  }
+
+  async readEncryptedChunk(fileId: string, index: number): Promise<Buffer | undefined> {
+    if (!existsSync(this.getChunkPath(fileId, index))) {
+      return undefined;
+    }
+
+    return readFile(this.getChunkPath(fileId, index));
   }
 
   async chunkExists(fileId: string, index: number): Promise<boolean> {

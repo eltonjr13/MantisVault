@@ -1,5 +1,6 @@
-import { zlibSync } from "fflate";
+import { unzlibSync, zlibSync } from "fflate";
 import type { CompressionDecision, CompressionInput } from "@kazvault/shared";
+import type { CompressionAlgorithm } from "@kazvault/shared";
 
 const LOW_GAIN_EXTENSIONS = new Set([
   "jpg",
@@ -114,6 +115,14 @@ export async function compressBytes(bytes: Uint8Array, decision: CompressionDeci
   }
 
   return zlibSync(bytes, { level: decision.level });
+}
+
+export async function decompressBytes(bytes: Uint8Array, algorithm: CompressionAlgorithm): Promise<Uint8Array> {
+  if (algorithm === "store") {
+    return bytes;
+  }
+
+  return unzlibSync(bytes);
 }
 
 function getExtension(fileName: string): string {

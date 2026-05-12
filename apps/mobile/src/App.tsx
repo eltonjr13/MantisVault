@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   CheckCircle2,
   Copy,
+  Download,
   FileUp,
   KeyRound,
   Pause,
@@ -43,6 +44,7 @@ import {
   unlockWithDevice
 } from "./services/vaultKeys";
 import { uploadEncryptedFile } from "./services/uploader";
+import { downloadAndRestoreFile, saveRestoredFile } from "./services/downloader";
 
 type Tab = "pair" | "upload" | "vault" | "security";
 
@@ -284,7 +286,7 @@ export function App() {
         <UploadPanel pairing={pairing} masterKey={masterKey} controllers={controllersMap} />
       )}
 
-      {activeTab === "vault" && <VaultPanel pairing={pairing} />}
+      {activeTab === "vault" && <VaultPanel pairing={pairing} masterKey={masterKey} />}
     </main>
   );
 }
@@ -755,12 +757,14 @@ function UploadPanel(props: {
   );
 }
 
-function VaultPanel(props: { pairing?: PairPayload }) {
+function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
   const [files, setFiles] = useState<VaultFileRecord[]>([]);
   const [stats, setStats] = useState<VaultStats | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [downloads, setDownloads] = useState<Record<string, { progress: number; detail: string }>>({});
 
   const canLoad = Boolean(props.pairing);
+  const canDownload = Boolean(props.pairing && props.masterKey);
 
   async function refresh() {
     if (!props.pairing) {
@@ -790,6 +794,46 @@ function VaultPanel(props: { pairing?: PairPayload }) {
     return Math.min(100, (stats.usedBytes / stats.limitBytes) * 100);
   }, [stats]);
 
+  async function restoreFile(file: VaultFileRecord): Promise<void> {
+    if (!props.pairing || !props.masterKey) {
+      setError("Desbloqueie o cofre antes de baixar arquivos.");
+      return;
+    }
+
+    setError(undefined);
+    setDownloads((current) => ({
+      ...current,
+      [file.id]: { progress: 0, detail: "Preparando" }
+    }));
+
+    try {
+      const restored = await downloadAndRestoreFile({
+        fileId: file.id,
+        pairing: props.pairing,
+        masterKey: props.masterKey,
+        onProgress: (event) => {
+          setDownloads((current) => ({
+            ...current,
+            [file.id]: event
+          }));
+        }
+      });
+
+      saveRestoredFile(restored.fileName, restored.bytes, restored.mimeType);
+      setDownloads((current) => ({
+        ...current,
+        [file.id]: { progress: 1, detail: "Baixado" }
+      }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Falha ao restaurar arquivo.");
+      setDownloads((current) => {
+        const next = { ...current };
+        delete next[file.id];
+        return next;
+      });
+    }
+  }
+
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -801,6 +845,7 @@ function VaultPanel(props: { pairing?: PairPayload }) {
       </div>
 
       {!canLoad && <p className="notice-line">Pareamento necessario para consultar o cofre.</p>}
+      {canLoad && !props.masterKey && <p className="notice-line">Desbloqueie o cofre para baixar arquivos.</p>}
 
       {stats && (
         <div className="stats-grid">
@@ -838,9 +883,27 @@ function VaultPanel(props: { pairing?: PairPayload }) {
               <span>
                 {file.totalChunks} chunks · {formatBytes(file.encryptedBytes)} · {formatDate(file.createdAt)}
               </span>
+              {downloads[file.id] && (
+                <div className="download-progress">
+                  <div className="progress-track">
+                    <span style={{ width: `${Math.round(downloads[file.id].progress * 100)}%` }} />
+                  </div>
+                  <span>{downloads[file.id].detail}</span>
+                </div>
+              )}
             </div>
+            <div className="file-actions">
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Baixar arquivo"
+                disabled={!canDownload || Boolean(downloads[file.id] && downloads[file.id].progress < 1)}
+                onClick={() => void restoreFile(file)}
+              >
+                <Download size={18} />
+              </button>
             <button
-              className="icon-button"
+              className="icon-button danger"
               type="button"
               aria-label="Excluir arquivo"
               onClick={() => {
@@ -855,6 +918,7 @@ function VaultPanel(props: { pairing?: PairPayload }) {
             >
               <Trash2 size={18} />
             </button>
+            </div>
           </article>
         ))}
       </div>

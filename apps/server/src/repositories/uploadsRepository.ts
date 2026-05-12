@@ -61,6 +61,14 @@ export class UploadsRepository {
     return row ? mapUpload(row) : undefined;
   }
 
+  findByFileId(fileId: string): UploadRecord | undefined {
+    const row = this.db.get<UploadRow>(
+      "SELECT * FROM uploads WHERE file_id = ? ORDER BY created_at DESC LIMIT 1",
+      [fileId]
+    );
+    return row ? mapUpload(row) : undefined;
+  }
+
   markChunkReceived(uploadId: string, index: number, updatedAt: string): UploadRecord {
     const upload = this.find(uploadId);
 

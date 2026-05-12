@@ -4,6 +4,7 @@ import type {
   UploadCompleteResponse,
   UploadInitRequest,
   UploadInitResponse,
+  VaultFileManifestResponse,
   VaultFileRecord,
   VaultStats
 } from "@kazvault/shared";
@@ -111,6 +112,18 @@ export async function listFiles(pairing: PairPayload): Promise<VaultFileRecord[]
   return response.files;
 }
 
+export async function getFileManifest(pairing: PairPayload, fileId: string): Promise<VaultFileManifestResponse> {
+  return requestJson<VaultFileManifestResponse>(pairing, `/api/files/${fileId}/manifest`, {
+    method: "GET"
+  });
+}
+
+export async function downloadChunk(pairing: PairPayload, fileId: string, index: number): Promise<Uint8Array> {
+  return requestBytes(pairing, `/api/files/${fileId}/chunks/${index}`, {
+    method: "GET"
+  });
+}
+
 export async function deleteFile(pairing: PairPayload, fileId: string): Promise<void> {
   await requestJson(pairing, `/api/files/${fileId}`, {
     method: "DELETE"
@@ -131,6 +144,22 @@ async function requestJson<T>(pairing: PairPayload, path: string, init: RequestI
   });
 
   return parseResponse(response) as Promise<T>;
+}
+
+async function requestBytes(pairing: PairPayload, path: string, init: RequestInit): Promise<Uint8Array> {
+  const headers = new Headers(init.headers);
+  headers.set("x-kazvault-token", pairing.token);
+
+  const response = await fetch(`${trimSlash(pairing.baseUrl)}${path}`, {
+    ...init,
+    headers
+  });
+
+  if (!response.ok) {
+    await parseResponse(response);
+  }
+
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 async function parseResponse(response: Response): Promise<unknown> {
