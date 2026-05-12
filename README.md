@@ -88,6 +88,7 @@ O QR Code da tela `/pair` e temporario, atualiza automaticamente a cada 2 minuto
 - `PATCH /api/uploads/:uploadId/chunk/:index`
 - `POST /api/uploads/:uploadId/complete`
 - `GET /api/vault/stats`
+- `GET /api/vault/optimizers`
 - `GET /api/vault/keyring`
 - `PUT /api/vault/keyring`
 - `GET /api/vault/settings`
@@ -106,3 +107,38 @@ O QR Code da tela `/pair` e temporario, atualiza automaticamente a cada 2 minuto
 - Se o usuario limpar cache/dados do site, o login local e removido.
 - A chave mestra local e gerada no app e fica envelopada pela chave local do dispositivo e pela chave de recuperacao.
 - Se a chave de recuperacao for perdida, os arquivos nao poderao ser restaurados em outro dispositivo.
+
+## MantisVault Lossless Engine
+
+O modo padrao e `lossless-safe`: otimiza/comprime antes de criptografar, nunca usa compressao com perda e descarta o resultado se a economia ficar abaixo de `MIN_OPTIMIZATION_GAIN_PERCENT` (padrao: `2`).
+
+Estrategias ativas no app:
+
+- texto/codigo: compressao sem perda com fallback seguro;
+- JPEG/PNG/video/arquivos ja comprimidos: original preservado no app para evitar ganho irrelevante ou perda de qualidade;
+- arquivos desconhecidos: tenta compressao sem perda e aceita apenas se houver ganho real.
+- deduplicacao: chunks sao identificados por hash antes da criptografia; chunks repetidos nao sao gravados novamente no disco.
+- hashes: o manifest criptografado registra hash original, hash final, estrategia, motivo da decisao e economia real.
+
+Variaveis:
+
+```bash
+MIN_OPTIMIZATION_GAIN_PERCENT=2
+CHUNK_SIZE_MB=8
+```
+
+Dependencias externas opcionais para o engine local do PC:
+
+```bash
+zstd --version
+xz --version
+brotli --version
+cjxl --version
+djxl --version
+jpegtran -version
+oxipng --version
+qpdf --version
+ffmpeg -version
+```
+
+Se alguma ferramenta nao existir, o sistema preserva o original e continua funcionando. O endpoint `GET /api/vault/optimizers` mostra quais binarios foram encontrados.

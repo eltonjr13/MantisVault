@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   CheckCircle2,
+  Activity,
+  AlertTriangle,
   Copy,
+  Database,
   Download,
   FileUp,
+  HardDrive,
   KeyRound,
   Pause,
+  Plus,
   Play,
   QrCode,
   RefreshCcw,
@@ -26,15 +31,27 @@ import {
 } from "./services/pairing";
 import {
   confirmPairing,
+  addStorageLocation,
+  checkStorageHealth,
+  createStoragePool,
   deleteFile,
   fetchPairPayload,
+  getStoragePool,
+  getStorageUsage,
   getVaultSettings,
   getRemoteVaultKeyring,
   getVaultStats,
+  listStoragePools,
+  planStorageRebalance,
   listFiles,
   saveRemoteVaultKeyring,
+  updateStoragePool,
   updateVaultSettings,
-  type RemoteVaultKeyring
+  type CreateStoragePoolRequest,
+  type RemoteVaultKeyring,
+  type StoragePool,
+  type StoragePoolMode,
+  type StorageUsage
 } from "./services/serverClient";
 import {
   createAutomaticKeyring,
@@ -53,7 +70,7 @@ import {
   type VaultFileMetadata
 } from "./services/downloader";
 
-type Tab = "pair" | "upload" | "vault" | "security";
+type Tab = "pair" | "upload" | "vault" | "storage" | "security";
 
 interface QueueItem {
   id: string;
@@ -67,6 +84,10 @@ interface QueueItem {
     compressedSize: number;
     algorithm: CompressionAlgorithm;
     level: number;
+    strategy: string;
+    optimized: boolean;
+    reason: string;
+    warnings: string[];
   };
   uploadId?: string;
   fileId?: string;
@@ -267,6 +288,12 @@ export function App() {
         />
         <TabButton icon={<Vault size={18} />} label="Cofre" active={activeTab === "vault"} onClick={() => setActiveTab("vault")} />
         <TabButton
+          icon={<HardDrive size={18} />}
+          label="Storage"
+          active={activeTab === "storage"}
+          onClick={() => setActiveTab("storage")}
+        />
+        <TabButton
           icon={<Settings size={18} />}
           label="Seguranca"
           active={activeTab === "security"}
@@ -300,6 +327,7 @@ export function App() {
       )}
 
       {activeTab === "vault" && <VaultPanel pairing={pairing} masterKey={masterKey} />}
+      {activeTab === "storage" && <StoragePanel pairing={pairing} />}
     </main>
   );
 }
@@ -983,7 +1011,11 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
                       originalSize: metadata[file.id].originalSize,
                       compressedSize: metadata[file.id].compressedSize,
                       algorithm: metadata[file.id].compressionAlgorithm as CompressionAlgorithm,
-                      level: metadata[file.id].compressionLevel
+                      level: metadata[file.id].compressionLevel,
+                      strategy: metadata[file.id].optimizationStrategy,
+                      optimized: metadata[file.id].optimized,
+                      reason: metadata[file.id].decisionReason,
+                      warnings: metadata[file.id].warnings
                     }}
                   />
                 </div>
@@ -1039,11 +1071,20 @@ function CompressionSummary(props: {
     compressedSize: number;
     algorithm: CompressionAlgorithm | string;
     level: number;
+    strategy?: string;
+    optimized?: boolean;
+    reason?: string;
+    warnings?: string[];
   };
 }) {
   const reduction = calculateReductionPercent(props.summary.originalSize, props.summary.compressedSize);
   const savedBytes = props.summary.originalSize - props.summary.compressedSize;
-  const resultLabel = reduction >= 0 ? `Economia ${formatPercent(reduction)}` : `Aumentou ${formatPercent(Math.abs(reduction))}`;
+  const algorithmLabel = formatCompressionLabel(props.summary.algorithm, props.summary.strategy);
+  const resultLabel = props.summary.optimized
+    ? `Economia ${formatPercent(reduction)}`
+    : props.summary.strategy === "skip"
+      ? "Original preservado"
+      : "Sem ganho relevante";
 
   return (
     <div className={reduction >= 0 ? "compression-summary" : "compression-summary negative"}>
@@ -1052,11 +1093,20 @@ function CompressionSummary(props: {
       </span>
       <strong>{resultLabel}</strong>
       <small>
-        {formatCompressionAlgorithm(props.summary.algorithm)}
-        {props.summary.level > 0 ? ` nivel ${props.summary.level}` : ""} - {formatBytes(Math.abs(savedBytes))}
+        {algorithmLabel}
+        {props.summary.optimized ? " - Otimizado sem perda" : " - Criptografia aplicada"} - {formatBytes(Math.abs(savedBytes))}
       </small>
+      {props.summary.reason && <small>{props.summary.reason}</small>}
     </div>
   );
+}
+
+function formatCompressionLabel(algorithm: CompressionAlgorithm | string, strategy?: string): string {
+  if (algorithm === "deflate-fflate" && strategy && !["skip", "deflate-fflate"].includes(strategy)) {
+    return `${formatCompressionAlgorithm(strategy)} (fallback seguro)`;
+  }
+
+  return formatCompressionAlgorithm(strategy ?? algorithm);
 }
 
 function formatBytes(value: number): string {
@@ -1085,15 +1135,21 @@ function formatPercent(value: number): string {
 }
 
 function formatCompressionAlgorithm(value: CompressionAlgorithm | string): string {
-  if (value === "store") {
-    return "sem compressao";
-  }
+  const labels: Record<string, string> = {
+    store: "Original Preservado",
+    skip: "Original Preservado",
+    "deflate-fflate": "Compressao sem perda",
+    zstd: "Zstandard",
+    brotli: "Brotli",
+    xz: "XZ/LZMA2",
+    "jpeg-xl-lossless": "JPEG XL Lossless",
+    "jpegtran-lossless": "JPEG Lossless",
+    "png-lossless": "PNG Lossless",
+    "pdf-lossless": "PDF Lossless",
+    "mp4-remux": "MP4 Remux"
+  };
 
-  if (value === "deflate-fflate") {
-    return "deflate";
-  }
-
-  return value;
+  return labels[value] ?? value;
 }
 
 function formatDate(value: string): string {

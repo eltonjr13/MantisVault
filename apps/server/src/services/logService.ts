@@ -35,8 +35,22 @@ function sanitize(value: Record<string, unknown>): Record<string, unknown> {
     Object.entries(value).map(([key, item]) => {
       const lowered = key.toLowerCase();
 
-      if (lowered.includes("token") || lowered.includes("password") || lowered.includes("secret")) {
+      if (
+        lowered.includes("token") ||
+        lowered.includes("password") ||
+        lowered.includes("secret") ||
+        lowered === "code" ||
+        lowered.includes("authorization")
+      ) {
         return [key, "[omitted]"];
+      }
+
+      if (Array.isArray(item)) {
+        return [key, item.map((entry) => (entry && typeof entry === "object" ? sanitize(entry as Record<string, unknown>) : entry))];
+      }
+
+      if (item && typeof item === "object") {
+        return [key, sanitize(item as Record<string, unknown>)];
       }
 
       return [key, item];

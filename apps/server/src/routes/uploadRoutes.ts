@@ -8,10 +8,12 @@ import type {
 } from "@kazvault/shared";
 import type { FilesRepository } from "../repositories/filesRepository";
 import type { UploadsRepository } from "../repositories/uploadsRepository";
+import type { ChunksRepository } from "../repositories/chunksRepository";
 import type { StorageService } from "../services/storageService";
 import type { LogService } from "../services/logService";
 import type { ServerConfig } from "../config/config";
 import type { PairingService } from "../services/pairingService";
+import type { StorageManagerModule } from "../modules/storage/storage.service";
 import { requirePairToken } from "./auth";
 import { sha256Hex } from "../utils/hash";
 
@@ -19,6 +21,8 @@ interface UploadRouteDeps {
   config: ServerConfig;
   filesRepository: FilesRepository;
   uploadsRepository: UploadsRepository;
+  chunksRepository: ChunksRepository;
+  storageManager: StorageManagerModule;
   storage: StorageService;
   pairingService: PairingService;
   log: LogService;
@@ -114,8 +118,63 @@ export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRou
         return reply.code(400).send({ error: "CHUNK_HASH_MISMATCH" });
       }
 
-      const file = deps.filesRepository.find(upload.fileId);
-      await deps.storage.writeEncryptedChunk(upload.fileId, index, body, file?.storageDir);
+      const plainChunkHash = request.headers["x-kazvault-plain-chunk-sha256"];
+      const defaultPool = deps.storageManager.repositories.pools.firstActive();
+
+      if (!defaultPool) {
+        return reply.code(409).send({ error: "STORAGE_POOL_NOT_FOUND", message: "Nenhum storage pool ativo configurado." });
+      }
+
+      if (typeof plainChunkHash === "string" && /^[a-f0-9]{64}$/i.test(plainChunkHash)) {
+        const existing = deps.chunksRepository.findIndexedChunk(plainChunkHash);
+
+        if (existing) {
+          deps.chunksRepository.mapFileChunk({
+            fileId: upload.fileId,
+            chunkIndex: index,
+            chunkHash: plainChunkHash,
+            deduplicated: true
+          });
+        } else {
+          await deps.storageManager.chunks.storeChunk({
+            poolId: defaultPool.id,
+            chunkHash: plainChunkHash,
+            encryptedBuffer: body
+          });
+          deps.chunksRepository.indexChunk({
+            chunkHash: plainChunkHash,
+            fileId: upload.fileId,
+            chunkIndex: index,
+            sizeBytes: body.byteLength,
+            createdAt: new Date().toISOString()
+          });
+          deps.chunksRepository.mapFileChunk({
+            fileId: upload.fileId,
+            chunkIndex: index,
+            chunkHash: plainChunkHash,
+            deduplicated: false
+          });
+        }
+      } else {
+        await deps.storageManager.chunks.storeChunk({
+          poolId: defaultPool.id,
+          chunkHash: actualHash,
+          encryptedBuffer: body
+        });
+        deps.chunksRepository.indexChunk({
+          chunkHash: actualHash,
+          fileId: upload.fileId,
+          chunkIndex: index,
+          sizeBytes: body.byteLength,
+          createdAt: new Date().toISOString()
+        });
+        deps.chunksRepository.mapFileChunk({
+          fileId: upload.fileId,
+          chunkIndex: index,
+          chunkHash: actualHash,
+          deduplicated: false
+        });
+      }
       const updated = deps.uploadsRepository.markChunkReceived(upload.id, index, new Date().toISOString());
 
       const response: UploadChunkResponse = {
@@ -142,7 +201,16 @@ export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRou
 
       for (let index = 0; index < upload.totalChunks; index += 1) {
         const file = deps.filesRepository.find(upload.fileId);
-        if (!(await deps.storage.chunkExists(upload.fileId, index, file?.storageDir))) {
+        const mapped = deps.chunksRepository.findFileChunk(upload.fileId, index);
+        const indexed = mapped ? deps.chunksRepository.findIndexedChunk(mapped.chunkHash) : undefined;
+        const storagePoolChunk = mapped ? await deps.storageManager.chunks.readChunk(mapped.chunkHash) : undefined;
+        const exists = storagePoolChunk
+          ? true
+          : indexed
+          ? await deps.storage.chunkExists(indexed.fileId, indexed.chunkIndex, deps.filesRepository.find(indexed.fileId)?.storageDir)
+          : await deps.storage.chunkExists(upload.fileId, index, file?.storageDir);
+
+        if (!exists) {
           missingChunks.push(index);
         }
       }

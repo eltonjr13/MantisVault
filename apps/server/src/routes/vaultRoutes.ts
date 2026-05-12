@@ -2,18 +2,23 @@ import type { FastifyInstance } from "fastify";
 import type { VaultFileManifestResponse, VaultSettings, VaultStats } from "@kazvault/shared";
 import type { FilesRepository } from "../repositories/filesRepository";
 import type { UploadsRepository } from "../repositories/uploadsRepository";
+import type { ChunksRepository } from "../repositories/chunksRepository";
 import type { StorageService } from "../services/storageService";
 import type { ServerConfig } from "../config/config";
 import type { PairingService } from "../services/pairingService";
 import type { LogService } from "../services/logService";
+import type { StorageManagerModule } from "../modules/storage/storage.service";
 import { requirePairToken } from "./auth";
 import { saveStorageDirSetting } from "../config/config";
 import { isAbsolute } from "node:path";
+import { getAvailableOptimizers } from "../vault/optimizer/dependency-checker";
 
 interface VaultRouteDeps {
   config: ServerConfig;
   filesRepository: FilesRepository;
   uploadsRepository: UploadsRepository;
+  chunksRepository: ChunksRepository;
+  storageManager: StorageManagerModule;
   storage: StorageService;
   pairingService: PairingService;
   log: LogService;
@@ -45,6 +50,15 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
     };
 
     return response;
+  });
+
+  app.get("/api/vault/optimizers", { preHandler: auth }, async () => {
+    return {
+      mode: "lossless-safe",
+      minimumGainPercent: Number(process.env.MIN_OPTIMIZATION_GAIN_PERCENT ?? "2"),
+      optimizers: await getAvailableOptimizers(),
+      visualEconomyEnabled: false
+    };
   });
 
   app.put<{ Body: Partial<VaultSettings> }>("/api/vault/settings", { preHandler: auth }, async (request, reply) => {
@@ -126,7 +140,16 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
         return reply.code(409).send({ error: "FILE_NOT_COMPLETED" });
       }
 
-      const chunk = await deps.storage.readEncryptedChunk(file.id, index, file.storageDir);
+      const mapped = deps.chunksRepository.findFileChunk(file.id, index);
+      const indexed = mapped ? deps.chunksRepository.findIndexedChunk(mapped.chunkHash) : undefined;
+      const storagePoolChunk = mapped ? await deps.storageManager.chunks.readChunk(mapped.chunkHash) : undefined;
+      const chunk = storagePoolChunk ?? (indexed
+        ? await deps.storage.readEncryptedChunk(
+            indexed.fileId,
+            indexed.chunkIndex,
+            deps.filesRepository.find(indexed.fileId)?.storageDir
+          )
+        : await deps.storage.readEncryptedChunk(file.id, index, file.storageDir));
 
       if (!chunk) {
         return reply.code(404).send({ error: "CHUNK_NOT_FOUND" });
@@ -169,6 +192,7 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
     }
 
     await deps.storage.deleteFile(file.id, file.storageDir);
+    deps.chunksRepository.deleteByFile(file.id);
     deps.uploadsRepository.deleteByFile(file.id);
     deps.filesRepository.delete(file.id);
     await deps.log.info("file_deleted", { fileId: file.id });

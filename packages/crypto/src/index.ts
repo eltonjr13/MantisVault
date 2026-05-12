@@ -1,4 +1,4 @@
-import { argon2id, sha256 } from "hash-wasm";
+import { argon2id, createSHA256, sha256 } from "hash-wasm";
 import sodium from "libsodium-wrappers-sumo";
 
 const MAGIC = new Uint8Array([0x4b, 0x5a, 0x56, 0x31]);
@@ -122,6 +122,17 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   
   // Fallback para hash-wasm (funciona em qualquer contexto)
   return await sha256(bytes);
+}
+
+export async function hashChunksSha256(chunks: AsyncIterable<Uint8Array> | Iterable<Uint8Array>): Promise<string> {
+  const hasher = await createSHA256();
+  hasher.init();
+
+  for await (const chunk of chunks) {
+    hasher.update(chunk);
+  }
+
+  return hasher.digest("hex");
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {

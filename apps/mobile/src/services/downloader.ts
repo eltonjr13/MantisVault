@@ -14,6 +14,10 @@ export interface VaultFileMetadata {
   compressedSize: number;
   compressionAlgorithm: string;
   compressionLevel: number;
+  optimizationStrategy?: string;
+  optimized?: boolean;
+  decisionReason?: string;
+  warnings?: string[];
   uploadedAt: string;
 }
 
@@ -35,6 +39,10 @@ export async function loadVaultFileMetadata(input: {
     compressedSize: manifest.compressedSize,
     compressionAlgorithm: manifest.compressionAlgorithm,
     compressionLevel: manifest.compressionLevel,
+    optimizationStrategy: manifest.optimizationStrategy,
+    optimized: manifest.optimized,
+    decisionReason: manifest.decisionReason,
+    warnings: manifest.warnings,
     uploadedAt: manifest.uploadedAt
   };
 }
@@ -66,10 +74,14 @@ export async function downloadAndRestoreFile(input: {
     });
 
     const encryptedChunk = await downloadChunk(input.pairing, input.fileId, index);
+    const aad =
+      manifest.chunkAadMode === "content-hash" && manifest.chunkHashes?.[index]
+        ? `kazvault:chunk:${manifest.chunkHashes[index]}`
+        : `kazvault:chunk:${manifestEnvelope.uploadId}:${index}`;
     const compressedChunk = await decryptBytes(
       encryptedChunk,
       input.masterKey,
-      `kazvault:chunk:${manifestEnvelope.uploadId}:${index}`
+      aad
     );
 
     if (isWholeFileCompression) {

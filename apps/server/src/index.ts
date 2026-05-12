@@ -1,12 +1,18 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import { loadConfig } from "./config/config";
 import { VaultDatabase } from "./db/database";
 import { FilesRepository } from "./repositories/filesRepository";
 import { UploadsRepository } from "./repositories/uploadsRepository";
+import { ChunksRepository } from "./repositories/chunksRepository";
 import { registerPairRoutes } from "./routes/pairRoutes";
 import { registerUploadRoutes } from "./routes/uploadRoutes";
 import { registerVaultRoutes } from "./routes/vaultRoutes";
+import { registerConnectorsRoutes } from "./modules/connectors/connectors.routes";
+import { ConnectorsRepository } from "./modules/connectors/connectors.repository";
+import { buildStorageManagerModule } from "./modules/storage/storage.service";
+import { registerStorageRoutes } from "./modules/storage/storage.routes";
 import { LogService } from "./services/logService";
 import { PairingService } from "./services/pairingService";
 import { StorageService } from "./services/storageService";
@@ -22,6 +28,15 @@ async function main(): Promise<void> {
 
   const filesRepository = new FilesRepository(db);
   const uploadsRepository = new UploadsRepository(db);
+  const chunksRepository = new ChunksRepository(db);
+  const connectorsRepository = new ConnectorsRepository(db);
+  const storageManager = buildStorageManagerModule(db);
+  await storageManager.pools.ensureDefaultPool({
+    name: "MantisVault Vault",
+    rootPath: storage.storageDir,
+    quotaBytes: config.spaceLimitBytes,
+    reservedFreeBytes: 20 * 1024 * 1024 * 1024
+  });
   filesRepository.backfillStorageDir(storage.storageDir);
   const pairingService = new PairingService(config, storage);
 
@@ -34,10 +49,16 @@ async function main(): Promise<void> {
     done(null, body);
   });
 
+  await app.register(multipart, {
+    limits: {
+      fileSize: 64 * 1024 * 1024
+    }
+  });
+
   await app.register(cors, {
     origin: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["content-type", "x-kazvault-token", "x-chunk-sha256"]
+    allowedHeaders: ["content-type", "x-kazvault-token", "x-chunk-sha256", "x-kazvault-plain-chunk-sha256"]
   });
 
   app.get("/health", async () => ({
@@ -50,6 +71,8 @@ async function main(): Promise<void> {
     config,
     filesRepository,
     uploadsRepository,
+    chunksRepository,
+    storageManager,
     storage,
     pairingService,
     log
@@ -58,6 +81,21 @@ async function main(): Promise<void> {
     config,
     filesRepository,
     uploadsRepository,
+    chunksRepository,
+    storageManager,
+    storage,
+    pairingService,
+    log
+  });
+  await registerStorageRoutes(app, {
+    storageManager,
+    pairingService
+  });
+  await registerConnectorsRoutes(app, {
+    dbRepository: connectorsRepository,
+    filesRepository,
+    chunksRepository,
+    storageManager,
     storage,
     pairingService,
     log

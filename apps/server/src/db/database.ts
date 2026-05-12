@@ -95,6 +95,172 @@ export class VaultDatabase {
         updated_at TEXT NOT NULL
       );
     `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS chunk_index (
+        chunk_hash TEXT PRIMARY KEY,
+        file_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS file_chunks (
+        file_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        chunk_hash TEXT NOT NULL,
+        deduplicated INTEGER NOT NULL,
+        PRIMARY KEY (file_id, chunk_index)
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS storage_pools (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        quota_bytes INTEGER NOT NULL,
+        used_bytes INTEGER NOT NULL DEFAULT 0,
+        reserved_free_bytes INTEGER NOT NULL,
+        warning_threshold_percent INTEGER NOT NULL,
+        critical_threshold_percent INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS storage_locations (
+        id TEXT PRIMARY KEY,
+        pool_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        root_path TEXT NOT NULL,
+        quota_bytes INTEGER NOT NULL,
+        used_bytes INTEGER NOT NULL DEFAULT 0,
+        reserved_free_bytes INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        priority INTEGER NOT NULL DEFAULT 0,
+        is_system_drive INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_checked_at TEXT,
+        FOREIGN KEY (pool_id) REFERENCES storage_pools(id)
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS chunk_locations (
+        id TEXT PRIMARY KEY,
+        chunk_hash TEXT NOT NULL,
+        pool_id TEXT NOT NULL,
+        location_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        encrypted_size_bytes INTEGER NOT NULL,
+        verified_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (pool_id) REFERENCES storage_pools(id),
+        FOREIGN KEY (location_id) REFERENCES storage_locations(id)
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS storage_usage_snapshots (
+        id TEXT PRIMARY KEY,
+        pool_id TEXT NOT NULL,
+        location_id TEXT,
+        total_bytes INTEGER NOT NULL,
+        available_bytes INTEGER NOT NULL,
+        used_by_vault_bytes INTEGER NOT NULL,
+        used_by_system_bytes INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (pool_id) REFERENCES storage_pools(id),
+        FOREIGN KEY (location_id) REFERENCES storage_locations(id)
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS connectors (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        account_identifier TEXT,
+        status TEXT NOT NULL,
+        encrypted_credentials_ref TEXT,
+        sync_cursor TEXT,
+        last_sync_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS connector_items (
+        id TEXT PRIMARY KEY,
+        connector_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        title TEXT,
+        mime_type TEXT,
+        original_size INTEGER,
+        original_hash TEXT,
+        stored_file_id TEXT,
+        manifest_id TEXT,
+        imported_at TEXT NOT NULL,
+        updated_at TEXT,
+        deleted_at TEXT,
+        metadata_json TEXT,
+        FOREIGN KEY (connector_id) REFERENCES connectors(id)
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS connector_sync_jobs (
+        id TEXT PRIMARY KEY,
+        connector_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        scanned_count INTEGER NOT NULL DEFAULT 0,
+        imported_count INTEGER NOT NULL DEFAULT 0,
+        skipped_count INTEGER NOT NULL DEFAULT 0,
+        failed_count INTEGER NOT NULL DEFAULT 0,
+        bytes_imported INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        report_json TEXT,
+        FOREIGN KEY (connector_id) REFERENCES connectors(id)
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS connector_credentials (
+        id TEXT PRIMARY KEY,
+        connector_id TEXT NOT NULL,
+        encrypted_payload_path TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (connector_id) REFERENCES connectors(id)
+      );
+    `);
+
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_connectors_type ON connectors(type);");
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_storage_locations_pool_id ON storage_locations(pool_id);");
+    this.db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_locations_root ON storage_locations(root_path);");
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_chunk_locations_hash ON chunk_locations(chunk_hash);");
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_chunk_locations_pool_id ON chunk_locations(pool_id);");
+    this.db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_chunk_locations_hash_location ON chunk_locations(chunk_hash, location_id);");
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_storage_usage_pool_location ON storage_usage_snapshots(pool_id, location_id);");
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_connector_items_connector_id ON connector_items(connector_id);");
+    this.db.run(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_items_connector_source ON connector_items(connector_id, source_id) WHERE deleted_at IS NULL;"
+    );
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_connector_items_original_hash ON connector_items(original_hash);");
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_connector_sync_jobs_connector_id ON connector_sync_jobs(connector_id);");
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_connector_credentials_connector_id ON connector_credentials(connector_id);");
   }
 
   private persist(): void {

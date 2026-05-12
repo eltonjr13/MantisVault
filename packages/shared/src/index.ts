@@ -7,15 +7,44 @@ export type UploadStatus =
   | "completed"
   | "failed";
 
+export type OptimizationMode = "lossless-safe" | "lossless-archive" | "visual-economy";
+
+export type OptimizationStrategy =
+  | "skip"
+  | "zstd"
+  | "brotli"
+  | "xz"
+  | "jpeg-xl-lossless"
+  | "jpegtran-lossless"
+  | "png-lossless"
+  | "pdf-lossless"
+  | "mp4-remux";
+
 export type CompressionModeName = "skip" | "fast" | "balanced" | "max";
 
-export type CompressionAlgorithm = "store" | "deflate-fflate";
+export type CompressionAlgorithm =
+  | "store"
+  | "deflate-fflate"
+  | "zstd"
+  | "brotli"
+  | "xz"
+  | "jpeg-xl-lossless"
+  | "jpegtran-lossless"
+  | "png-lossless"
+  | "pdf-lossless"
+  | "mp4-remux";
 
 export interface CompressionDecision {
   mode: CompressionModeName;
   algorithm: CompressionAlgorithm;
   level: 0 | 1 | 6 | 9;
+  optimizationMode: OptimizationMode;
+  strategy: OptimizationStrategy;
+  shouldAttempt: boolean;
+  minimumGainPercent: number;
+  userMessage: string;
   reason: string;
+  warnings: string[];
 }
 
 export interface CompressionInput {
@@ -78,10 +107,45 @@ export interface FileManifestPlaintext {
   compressionLevel: number;
   compressionScope?: "whole-file" | "per-chunk";
   compressedChunkSizes?: number[];
+  chunkHashes?: string[];
+  chunkAadMode?: "legacy-upload-index" | "content-hash";
+  optimizationMode?: OptimizationMode;
+  optimizationStrategy?: OptimizationStrategy;
+  optimized?: boolean;
+  encrypted?: boolean;
+  deduplicated?: boolean;
+  savedBytes?: number;
+  savedPercent?: number;
+  originalHash?: string;
+  finalHash?: string;
+  decisionReason?: string;
+  warnings?: string[];
   chunkCount: number;
   chunkSize: number;
   uploadedAt: string;
 }
+
+export type OptimizationResult = {
+  fileId: string;
+  originalName: string;
+  originalPath: string;
+  outputPath: string;
+  originalSize: number;
+  finalSize: number;
+  savedBytes: number;
+  savedPercent: number;
+  mode: OptimizationMode;
+  strategy: OptimizationStrategy;
+  algorithm: string;
+  optimized: boolean;
+  encrypted: boolean;
+  deduplicated: boolean;
+  originalHash: string;
+  finalHash: string;
+  reason: string;
+  warnings: string[];
+  createdAt: string;
+};
 
 export interface VaultFileRecord {
   id: string;

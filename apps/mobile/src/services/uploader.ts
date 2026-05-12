@@ -1,6 +1,13 @@
-import { chooseCompressionMode, compressBytes } from "@kazvault/compression";
-import { base64ToBytes, encryptBytes, encryptJson, sha256Hex } from "@kazvault/crypto";
-import type { CompressionAlgorithm, FileManifestPlaintext, PairPayload, UploadStatus } from "@kazvault/shared";
+import { calculateSavings, chooseCompressionMode, compressBytes } from "@kazvault/compression";
+import { base64ToBytes, encryptBytes, encryptJson, hashChunksSha256, sha256Hex } from "@kazvault/crypto";
+import type {
+  CompressionAlgorithm,
+  FileManifestPlaintext,
+  OptimizationMode,
+  OptimizationStrategy,
+  PairPayload,
+  UploadStatus
+} from "@kazvault/shared";
 import { completeUpload, initUpload, uploadChunk } from "./serverClient";
 
 const CHUNK_SIZE = 8 * 1024 * 1024;
@@ -22,6 +29,11 @@ export interface UploadCompressionSummary {
   compressedSize: number;
   algorithm: CompressionAlgorithm;
   level: number;
+  strategy: OptimizationStrategy;
+  mode: OptimizationMode;
+  optimized: boolean;
+  reason: string;
+  warnings: string[];
 }
 
 export interface UploadResumeState {
@@ -50,23 +62,45 @@ export async function uploadEncryptedFile(input: {
   const decision = chooseCompressionMode(environment);
   const totalChunks = Math.max(1, Math.ceil(input.file.size / CHUNK_SIZE));
   const compressedChunkSizes: number[] = [];
-  let compressedSize = 0;
+  const candidateCompressedChunks: Uint8Array[] = [];
+  let candidateCompressedSize = 0;
 
-  for (let index = 0; index < totalChunks; index += 1) {
-    throwIfAborted(input.signal);
+  const originalHash = await hashFile(input.file);
 
-    input.onProgress({
-      status: "compressing",
-      progress: 0.04 + (index / totalChunks) * 0.12,
-      detail: `Preparando ${index + 1}/${totalChunks}`,
-      totalChunks
-    });
+  if (decision.shouldAttempt) {
+    for (let index = 0; index < totalChunks; index += 1) {
+      throwIfAborted(input.signal);
 
-    const sourceChunk = await readFileChunk(input.file, index);
-    const compressedChunk = await compressBytes(sourceChunk, decision);
-    compressedChunkSizes.push(compressedChunk.byteLength);
-    compressedSize += compressedChunk.byteLength;
-    await yieldToBrowser();
+      input.onProgress({
+        status: "compressing",
+        progress: 0.04 + (index / totalChunks) * 0.12,
+        detail: `Preparando ${index + 1}/${totalChunks}`,
+        totalChunks
+      });
+
+      const sourceChunk = await readFileChunk(input.file, index);
+      const compressedChunk = await compressBytes(sourceChunk, decision);
+      candidateCompressedChunks.push(compressedChunk);
+      candidateCompressedSize += compressedChunk.byteLength;
+      await yieldToBrowser();
+    }
+  } else {
+    candidateCompressedSize = input.file.size;
+  }
+
+  const savings = calculateSavings(input.file.size, candidateCompressedSize);
+  const useOptimized = decision.shouldAttempt && savings.accepted;
+  const finalSize = useOptimized ? candidateCompressedSize : input.file.size;
+  const finalAlgorithm: CompressionAlgorithm = useOptimized ? decision.algorithm : "store";
+  const finalLevel = useOptimized ? decision.level : 0;
+  const finalHash = useOptimized ? await hashBytes(candidateCompressedChunks) : originalHash;
+  const finalReason = !decision.shouldAttempt ? decision.reason : savings.reason;
+  const finalChunkHashes = useOptimized
+    ? await Promise.all(candidateCompressedChunks.map((chunk) => sha256Hex(chunk)))
+    : await hashFileChunks(input.file);
+
+  if (useOptimized) {
+    compressedChunkSizes.push(...candidateCompressedChunks.map((chunk) => chunk.byteLength));
   }
 
   const manifest: FileManifestPlaintext = {
@@ -74,11 +108,24 @@ export async function uploadEncryptedFile(input: {
     extension: getExtension(input.file.name),
     mimeType: input.file.type || undefined,
     originalSize: input.file.size,
-    compressedSize,
-    compressionAlgorithm: decision.algorithm,
-    compressionLevel: decision.level,
+    compressedSize: finalSize,
+    compressionAlgorithm: finalAlgorithm,
+    compressionLevel: finalLevel,
     compressionScope: "per-chunk",
     compressedChunkSizes,
+    chunkHashes: finalChunkHashes,
+    chunkAadMode: "content-hash",
+    optimizationMode: decision.optimizationMode,
+    optimizationStrategy: useOptimized ? decision.strategy : "skip",
+    optimized: useOptimized,
+    encrypted: true,
+    deduplicated: new Set(finalChunkHashes).size < finalChunkHashes.length,
+    savedBytes: input.file.size - finalSize,
+    savedPercent: input.file.size > 0 ? ((input.file.size - finalSize) / input.file.size) * 100 : 0,
+    originalHash,
+    finalHash,
+    decisionReason: finalReason,
+    warnings: decision.warnings,
     chunkCount: totalChunks,
     chunkSize: CHUNK_SIZE,
     uploadedAt: new Date().toISOString()
@@ -92,7 +139,12 @@ export async function uploadEncryptedFile(input: {
       originalSize: manifest.originalSize,
       compressedSize: manifest.compressedSize,
       algorithm: manifest.compressionAlgorithm,
-      level: manifest.compressionLevel
+      level: manifest.compressionLevel,
+      strategy: manifest.optimizationStrategy ?? "skip",
+      mode: manifest.optimizationMode ?? "lossless-safe",
+      optimized: Boolean(manifest.optimized),
+      reason: manifest.decisionReason ?? decision.reason,
+      warnings: manifest.warnings ?? []
     },
     totalChunks
   });
@@ -101,7 +153,7 @@ export async function uploadEncryptedFile(input: {
   const encryptedManifestBytes = base64ToBytes(encryptedManifestBase64);
   const manifestSha256 = await sha256Hex(encryptedManifestBytes);
   const expectedEncryptedBytes =
-    encryptedManifestBytes.byteLength + compressedSize + totalChunks * ENCRYPTED_CHUNK_OVERHEAD_BYTES;
+    encryptedManifestBytes.byteLength + finalSize + totalChunks * ENCRYPTED_CHUNK_OVERHEAD_BYTES;
 
   let uploadId = input.resume.uploadId;
   let fileId = input.resume.fileId;
@@ -128,7 +180,12 @@ export async function uploadEncryptedFile(input: {
         originalSize: manifest.originalSize,
         compressedSize: manifest.compressedSize,
         algorithm: manifest.compressionAlgorithm,
-        level: manifest.compressionLevel
+        level: manifest.compressionLevel,
+        strategy: manifest.optimizationStrategy ?? "skip",
+        mode: manifest.optimizationMode ?? "lossless-safe",
+        optimized: Boolean(manifest.optimized),
+        reason: manifest.decisionReason ?? decision.reason,
+        warnings: manifest.warnings ?? []
       },
       totalChunks,
       completedChunks,
@@ -152,7 +209,12 @@ export async function uploadEncryptedFile(input: {
         originalSize: manifest.originalSize,
         compressedSize: manifest.compressedSize,
         algorithm: manifest.compressionAlgorithm,
-        level: manifest.compressionLevel
+        level: manifest.compressionLevel,
+        strategy: manifest.optimizationStrategy ?? "skip",
+        mode: manifest.optimizationMode ?? "lossless-safe",
+        optimized: Boolean(manifest.optimized),
+        reason: manifest.decisionReason ?? decision.reason,
+        warnings: manifest.warnings ?? []
       },
       totalChunks,
       completedChunks,
@@ -161,8 +223,9 @@ export async function uploadEncryptedFile(input: {
     });
 
     const sourceChunk = await readFileChunk(input.file, index);
-    const compressedChunk = await compressBytes(sourceChunk, decision);
-    const encryptedChunk = await encryptBytes(compressedChunk, input.masterKey, `kazvault:chunk:${uploadId}:${index}`);
+    const compressedChunk = useOptimized ? candidateCompressedChunks[index] : sourceChunk;
+    const plainChunkSha256 = finalChunkHashes[index];
+    const encryptedChunk = await encryptBytes(compressedChunk, input.masterKey, `kazvault:chunk:${plainChunkSha256}`);
     const chunkSha256 = await sha256Hex(encryptedChunk);
     const response = await uploadChunk({
       pairing: input.pairing,
@@ -170,6 +233,7 @@ export async function uploadEncryptedFile(input: {
       index,
       bytes: encryptedChunk,
       sha256: chunkSha256,
+      plainChunkSha256,
       signal: input.signal
     });
 
@@ -183,7 +247,12 @@ export async function uploadEncryptedFile(input: {
         originalSize: manifest.originalSize,
         compressedSize: manifest.compressedSize,
         algorithm: manifest.compressionAlgorithm,
-        level: manifest.compressionLevel
+        level: manifest.compressionLevel,
+        strategy: manifest.optimizationStrategy ?? "skip",
+        mode: manifest.optimizationMode ?? "lossless-safe",
+        optimized: Boolean(manifest.optimized),
+        reason: manifest.decisionReason ?? decision.reason,
+        warnings: manifest.warnings ?? []
       },
       totalChunks,
       completedChunks,
@@ -205,7 +274,12 @@ export async function uploadEncryptedFile(input: {
       originalSize: manifest.originalSize,
       compressedSize: manifest.compressedSize,
       algorithm: manifest.compressionAlgorithm,
-      level: manifest.compressionLevel
+      level: manifest.compressionLevel,
+      strategy: manifest.optimizationStrategy ?? "skip",
+      mode: manifest.optimizationMode ?? "lossless-safe",
+      optimized: Boolean(manifest.optimized),
+      reason: manifest.decisionReason ?? decision.reason,
+      warnings: manifest.warnings ?? []
     },
     totalChunks,
     completedChunks,
@@ -247,6 +321,33 @@ async function readFileChunk(file: File, index: number): Promise<Uint8Array> {
   const start = index * CHUNK_SIZE;
   const end = Math.min(start + CHUNK_SIZE, file.size);
   return new Uint8Array(await file.slice(start, end).arrayBuffer());
+}
+
+async function hashFile(file: File): Promise<string> {
+  async function* chunks() {
+    const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+
+    for (let index = 0; index < totalChunks; index += 1) {
+      yield readFileChunk(file, index);
+    }
+  }
+
+  return hashChunksSha256(chunks());
+}
+
+async function hashFileChunks(file: File): Promise<string[]> {
+  const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+  const hashes: string[] = [];
+
+  for (let index = 0; index < totalChunks; index += 1) {
+    hashes.push(await sha256Hex(await readFileChunk(file, index)));
+  }
+
+  return hashes;
+}
+
+async function hashBytes(chunks: Uint8Array[]): Promise<string> {
+  return hashChunksSha256(chunks);
 }
 
 function yieldToBrowser(): Promise<void> {

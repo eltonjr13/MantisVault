@@ -18,6 +18,59 @@ export interface RemoteVaultKeyring {
   createdAt: string;
 }
 
+export type StoragePoolMode = "single" | "pooled-capacity" | "mirrored" | "hybrid";
+export type StoragePoolStatus = "active" | "readonly" | "degraded" | "error" | "disabled";
+export type StorageLocationStatus = "online" | "offline" | "readonly" | "full" | "error";
+
+export interface StoragePool {
+  id: string;
+  name: string;
+  mode: StoragePoolMode;
+  quotaBytes: number;
+  usedBytes: number;
+  reservedFreeBytes: number;
+  warningThresholdPercent: number;
+  criticalThresholdPercent: number;
+  status: StoragePoolStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StorageLocation {
+  id: string;
+  poolId: string;
+  label: string;
+  rootPath: string;
+  quotaBytes: number;
+  usedBytes: number;
+  reservedFreeBytes: number;
+  status: StorageLocationStatus;
+  priority: number;
+  isSystemDrive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastCheckedAt?: string;
+}
+
+export interface StorageUsage {
+  pool: StoragePool;
+  usefulCapacityBytes: number;
+  availableBytes: number;
+  usedPercent: number;
+  alerts: Array<{ code: string; severity: "info" | "warning" | "critical"; message: string; locationId?: string }>;
+  locations: Array<{ location: StorageLocation; availableBytes: number; usedPercent: number }>;
+}
+
+export interface CreateStoragePoolRequest {
+  name: string;
+  mode: StoragePoolMode;
+  quotaBytes: number;
+  reservedFreeBytes: number;
+  warningThresholdPercent?: number;
+  criticalThresholdPercent?: number;
+  locations: Array<{ label: string; rootPath: string; quotaBytes: number; reservedFreeBytes: number }>;
+}
+
 export async function fetchPairPayload(baseUrl: string): Promise<PairPayload> {
   const response = await fetch(`${trimSlash(baseUrl)}/api/pair/qr`);
   const body = (await parseResponse(response)) as { payload: PairPayload };
@@ -54,6 +107,7 @@ export async function uploadChunk(input: {
   index: number;
   bytes: Uint8Array;
   sha256: string;
+  plainChunkSha256?: string;
   signal?: AbortSignal;
 }): Promise<UploadChunkResponse> {
   const body = input.bytes.buffer.slice(
@@ -61,14 +115,20 @@ export async function uploadChunk(input: {
     input.bytes.byteOffset + input.bytes.byteLength
   ) as ArrayBuffer;
 
+  const headers: Record<string, string> = {
+    "content-type": "application/octet-stream",
+    "x-chunk-sha256": input.sha256
+  };
+
+  if (input.plainChunkSha256) {
+    headers["x-kazvault-plain-chunk-sha256"] = input.plainChunkSha256;
+  }
+
   return requestJson<UploadChunkResponse>(input.pairing, `/api/uploads/${input.uploadId}/chunk/${input.index}`, {
     method: "PATCH",
     body,
     signal: input.signal,
-    headers: {
-      "content-type": "application/octet-stream",
-      "x-chunk-sha256": input.sha256
-    }
+    headers
   });
 }
 
@@ -144,6 +204,74 @@ export async function deleteFile(pairing: PairPayload, fileId: string): Promise<
   });
 }
 
+export async function listStoragePools(pairing: PairPayload): Promise<StoragePool[]> {
+  const response = await requestJson<{ pools: StoragePool[] }>(pairing, "/api/storage/pools", {
+    method: "GET"
+  });
+
+  return response.pools;
+}
+
+export async function createStoragePool(pairing: PairPayload, request: CreateStoragePoolRequest): Promise<{
+  pool: StoragePool;
+  locations: StorageLocation[];
+  warnings: string[];
+}> {
+  return requestJson(pairing, "/api/storage/pools", {
+    method: "POST",
+    body: JSON.stringify(request)
+  });
+}
+
+export async function updateStoragePool(pairing: PairPayload, poolId: string, patch: Partial<CreateStoragePoolRequest>): Promise<{
+  pool: StoragePool;
+}> {
+  return requestJson(pairing, `/api/storage/pools/${poolId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch)
+  });
+}
+
+export async function getStoragePool(pairing: PairPayload, poolId: string): Promise<{ pool: StoragePool; locations: StorageLocation[] }> {
+  return requestJson(pairing, `/api/storage/pools/${poolId}`, {
+    method: "GET"
+  });
+}
+
+export async function getStorageUsage(pairing: PairPayload, poolId: string): Promise<StorageUsage> {
+  return requestJson(pairing, `/api/storage/pools/${poolId}/usage`, {
+    method: "GET"
+  });
+}
+
+export async function checkStorageHealth(pairing: PairPayload, poolId: string): Promise<{
+  pool: StoragePool;
+  locations: Array<StorageLocation & { disk?: { totalBytes: number; availableBytes: number; usedBytes: number } }>;
+  alerts: StorageUsage["alerts"];
+}> {
+  return requestJson(pairing, `/api/storage/pools/${poolId}/health`, {
+    method: "GET"
+  });
+}
+
+export async function addStorageLocation(pairing: PairPayload, poolId: string, input: {
+  label: string;
+  rootPath: string;
+  quotaBytes: number;
+  reservedFreeBytes: number;
+}): Promise<{ location: StorageLocation; warnings: string[] }> {
+  return requestJson(pairing, `/api/storage/pools/${poolId}/locations`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function planStorageRebalance(pairing: PairPayload, poolId: string): Promise<unknown> {
+  return requestJson(pairing, `/api/storage/pools/${poolId}/rebalance/plan`, {
+    method: "POST"
+  });
+}
+
 async function requestJson<T>(pairing: PairPayload, path: string, init: RequestInit): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("x-kazvault-token", pairing.token);
@@ -181,6 +309,14 @@ async function parseResponse(response: Response): Promise<unknown> {
   const body = contentType.includes("application/json") ? await response.json() : await response.text();
 
   if (!response.ok) {
+    if (typeof body === "object" && body && "error" in body) {
+      const nested = (body as { error: unknown }).error;
+
+      if (typeof nested === "object" && nested && "message" in nested) {
+        throw new Error(String((nested as { message: unknown }).message));
+      }
+    }
+
     const message =
       typeof body === "object" && body && "message" in body
         ? String((body as { message: unknown }).message)
