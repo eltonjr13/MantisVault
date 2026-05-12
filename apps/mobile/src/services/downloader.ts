@@ -8,6 +8,37 @@ export interface DownloadProgressEvent {
   detail: string;
 }
 
+export interface VaultFileMetadata {
+  fileName: string;
+  originalSize: number;
+  compressedSize: number;
+  compressionAlgorithm: string;
+  compressionLevel: number;
+  uploadedAt: string;
+}
+
+export async function loadVaultFileMetadata(input: {
+  fileId: string;
+  pairing: PairPayload;
+  masterKey: Uint8Array;
+}): Promise<VaultFileMetadata> {
+  const manifestEnvelope = await getFileManifest(input.pairing, input.fileId);
+  const manifest = await decryptJson<FileManifestPlaintext>(
+    manifestEnvelope.encryptedManifestBase64,
+    input.masterKey,
+    "kazvault:manifest"
+  );
+
+  return {
+    fileName: manifest.originalName || `kazvault-${input.fileId}`,
+    originalSize: manifest.originalSize,
+    compressedSize: manifest.compressedSize,
+    compressionAlgorithm: manifest.compressionAlgorithm,
+    compressionLevel: manifest.compressionLevel,
+    uploadedAt: manifest.uploadedAt
+  };
+}
+
 export async function downloadAndRestoreFile(input: {
   fileId: string;
   pairing: PairPayload;

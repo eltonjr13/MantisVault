@@ -390,6 +390,38 @@ textarea:focus {
   padding: 14px;
 }
 
+.compression-summary,
+.file-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.compression-summary {
+  color: #bdece3;
+}
+
+.compression-summary strong {
+  color: #89d8cb;
+}
+
+.compression-summary.negative,
+.compression-summary.negative strong {
+  color: #ffd08a;
+}
+
+.compression-summary small {
+  color: #9ca3af;
+}
+
+.file-metadata {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .queue-item.completed {
   border-color: rgba(34, 197, 94, 0.3);
   background: rgba(34, 197, 94, 0.08);

@@ -15,7 +15,7 @@ import {
   UploadCloud,
   Vault
 } from "lucide-react";
-import type { PairPayload, UploadStatus, VaultFileRecord, VaultStats } from "@kazvault/shared";
+import type { CompressionAlgorithm, PairPayload, UploadStatus, VaultFileRecord, VaultStats } from "@kazvault/shared";
 import {
   clearPairPayloadFromCurrentUrl,
   clearPairing,
@@ -44,7 +44,12 @@ import {
   unlockWithDevice
 } from "./services/vaultKeys";
 import { uploadEncryptedFile } from "./services/uploader";
-import { downloadAndRestoreFile, saveRestoredFile } from "./services/downloader";
+import {
+  downloadAndRestoreFile,
+  loadVaultFileMetadata,
+  saveRestoredFile,
+  type VaultFileMetadata
+} from "./services/downloader";
 
 type Tab = "pair" | "upload" | "vault" | "security";
 
@@ -55,6 +60,12 @@ interface QueueItem {
   progress: number;
   detail: string;
   completedChunks: number[];
+  compression?: {
+    originalSize: number;
+    compressedSize: number;
+    algorithm: CompressionAlgorithm;
+    level: number;
+  };
   uploadId?: string;
   fileId?: string;
   error?: string;
@@ -606,6 +617,7 @@ function UploadPanel(props: {
             status: event.status,
             progress: event.progress,
             detail: event.detail,
+            compression: event.compression ?? item.compression,
             completedChunks: event.completedChunks ?? item.completedChunks,
             uploadId: event.uploadId ?? item.uploadId,
             fileId: event.fileId ?? item.fileId
@@ -716,6 +728,7 @@ function UploadPanel(props: {
             <div>
               <strong>{item.file.name}</strong>
               <span>{formatBytes(item.file.size)}</span>
+              {item.compression && <CompressionSummary summary={item.compression} />}
             </div>
             <div className="progress-track">
               <span style={{ width: `${Math.round(item.progress * 100)}%` }} />
@@ -762,6 +775,7 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
   const [stats, setStats] = useState<VaultStats | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [downloads, setDownloads] = useState<Record<string, { progress: number; detail: string }>>({});
+  const [metadata, setMetadata] = useState<Record<string, VaultFileMetadata>>({});
 
   const canLoad = Boolean(props.pairing);
   const canDownload = Boolean(props.pairing && props.masterKey);
@@ -777,6 +791,28 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
       const [nextStats, nextFiles] = await Promise.all([getVaultStats(props.pairing), listFiles(props.pairing)]);
       setStats(nextStats);
       setFiles(nextFiles);
+
+      if (props.masterKey) {
+        const entries = await Promise.all(
+          nextFiles
+            .filter((file) => file.status === "completed")
+            .map(async (file) => {
+              try {
+                const fileMetadata = await loadVaultFileMetadata({
+                  fileId: file.id,
+                  pairing: props.pairing!,
+                  masterKey: props.masterKey!
+                });
+                return [file.id, fileMetadata] as const;
+              } catch {
+                return undefined;
+              }
+            })
+        );
+        setMetadata(Object.fromEntries(entries.filter((entry): entry is [string, VaultFileMetadata] => Boolean(entry))));
+      } else {
+        setMetadata({});
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Nao foi possivel carregar o cofre.");
     }
@@ -784,7 +820,7 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
 
   useEffect(() => {
     void refresh();
-  }, [props.pairing?.baseUrl, props.pairing?.token]);
+  }, [props.pairing?.baseUrl, props.pairing?.token, props.masterKey]);
 
   const usedPercent = useMemo(() => {
     if (!stats || stats.limitBytes === 0) {
@@ -883,6 +919,19 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
               <span>
                 {file.totalChunks} chunks · {formatBytes(file.encryptedBytes)} · {formatDate(file.createdAt)}
               </span>
+              {metadata[file.id] && (
+                <div className="file-metadata">
+                  <strong>{metadata[file.id].fileName}</strong>
+                  <CompressionSummary
+                    summary={{
+                      originalSize: metadata[file.id].originalSize,
+                      compressedSize: metadata[file.id].compressedSize,
+                      algorithm: metadata[file.id].compressionAlgorithm as CompressionAlgorithm,
+                      level: metadata[file.id].compressionLevel
+                    }}
+                  />
+                </div>
+              )}
               {downloads[file.id] && (
                 <div className="download-progress">
                   <div className="progress-track">
@@ -928,6 +977,32 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
   );
 }
 
+function CompressionSummary(props: {
+  summary: {
+    originalSize: number;
+    compressedSize: number;
+    algorithm: CompressionAlgorithm | string;
+    level: number;
+  };
+}) {
+  const reduction = calculateReductionPercent(props.summary.originalSize, props.summary.compressedSize);
+  const savedBytes = props.summary.originalSize - props.summary.compressedSize;
+  const resultLabel = reduction >= 0 ? `Economia ${formatPercent(reduction)}` : `Aumentou ${formatPercent(Math.abs(reduction))}`;
+
+  return (
+    <div className={reduction >= 0 ? "compression-summary" : "compression-summary negative"}>
+      <span>
+        {formatBytes(props.summary.originalSize)} -&gt; {formatBytes(props.summary.compressedSize)}
+      </span>
+      <strong>{resultLabel}</strong>
+      <small>
+        {formatCompressionAlgorithm(props.summary.algorithm)}
+        {props.summary.level > 0 ? ` nivel ${props.summary.level}` : ""} - {formatBytes(Math.abs(savedBytes))}
+      </small>
+    </div>
+  );
+}
+
 function formatBytes(value: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let size = value;
@@ -939,6 +1014,30 @@ function formatBytes(value: number): string {
   }
 
   return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function calculateReductionPercent(originalSize: number, compressedSize: number): number {
+  if (originalSize <= 0) {
+    return 0;
+  }
+
+  return 100 - (compressedSize / originalSize) * 100;
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
+}
+
+function formatCompressionAlgorithm(value: CompressionAlgorithm | string): string {
+  if (value === "store") {
+    return "sem compressao";
+  }
+
+  if (value === "deflate-fflate") {
+    return "deflate";
+  }
+
+  return value;
 }
 
 function formatDate(value: string): string {

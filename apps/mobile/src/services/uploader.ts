@@ -1,6 +1,6 @@
 import { chooseCompressionMode, compressBytes } from "@kazvault/compression";
 import { base64ToBytes, encryptBytes, encryptJson, sha256Hex } from "@kazvault/crypto";
-import type { FileManifestPlaintext, PairPayload, UploadStatus } from "@kazvault/shared";
+import type { CompressionAlgorithm, FileManifestPlaintext, PairPayload, UploadStatus } from "@kazvault/shared";
 import { completeUpload, initUpload, uploadChunk } from "./serverClient";
 
 const CHUNK_SIZE = 8 * 1024 * 1024;
@@ -10,10 +10,18 @@ export interface UploadProgressEvent {
   status: UploadStatus;
   progress: number;
   detail: string;
+  compression?: UploadCompressionSummary;
   totalChunks?: number;
   completedChunks?: number[];
   uploadId?: string;
   fileId?: string;
+}
+
+export interface UploadCompressionSummary {
+  originalSize: number;
+  compressedSize: number;
+  algorithm: CompressionAlgorithm;
+  level: number;
 }
 
 export interface UploadResumeState {
@@ -80,6 +88,12 @@ export async function uploadEncryptedFile(input: {
     status: "encrypting",
     progress: 0.18,
     detail: decision.reason,
+    compression: {
+      originalSize: manifest.originalSize,
+      compressedSize: manifest.compressedSize,
+      algorithm: manifest.compressionAlgorithm,
+      level: manifest.compressionLevel
+    },
     totalChunks
   });
 
@@ -110,6 +124,12 @@ export async function uploadEncryptedFile(input: {
       status: "uploading",
       progress: 0.22,
       detail: "Upload inicializado",
+      compression: {
+        originalSize: manifest.originalSize,
+        compressedSize: manifest.compressedSize,
+        algorithm: manifest.compressionAlgorithm,
+        level: manifest.compressionLevel
+      },
       totalChunks,
       completedChunks,
       uploadId,
@@ -128,6 +148,12 @@ export async function uploadEncryptedFile(input: {
       status: "encrypting",
       progress: 0.22 + (completedChunks.length / totalChunks) * 0.08,
       detail: `Criptografando ${index + 1}/${totalChunks}`,
+      compression: {
+        originalSize: manifest.originalSize,
+        compressedSize: manifest.compressedSize,
+        algorithm: manifest.compressionAlgorithm,
+        level: manifest.compressionLevel
+      },
       totalChunks,
       completedChunks,
       uploadId,
@@ -153,6 +179,12 @@ export async function uploadEncryptedFile(input: {
       status: "uploading",
       progress: 0.3 + (completedChunks.length / totalChunks) * 0.66,
       detail: `Chunk ${completedChunks.length}/${totalChunks}`,
+      compression: {
+        originalSize: manifest.originalSize,
+        compressedSize: manifest.compressedSize,
+        algorithm: manifest.compressionAlgorithm,
+        level: manifest.compressionLevel
+      },
       totalChunks,
       completedChunks,
       uploadId,
@@ -169,6 +201,12 @@ export async function uploadEncryptedFile(input: {
     status: "completed",
     progress: 1,
     detail: "Concluido",
+    compression: {
+      originalSize: manifest.originalSize,
+      compressedSize: manifest.compressedSize,
+      algorithm: manifest.compressionAlgorithm,
+      level: manifest.compressionLevel
+    },
     totalChunks,
     completedChunks,
     uploadId,
