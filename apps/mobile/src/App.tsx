@@ -303,11 +303,16 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <span className="brand-kicker">Kazento Local Vault</span>
-          <h1>KazVault</h1>
+        <div className="brand-lockup">
+          <span className="brand-emblem">
+            <Vault size={24} />
+          </span>
+          <div>
+            <span className="brand-kicker">Local-first secure vault</span>
+            <h1>KazVault</h1>
+          </div>
         </div>
-        <div className="status-pill">
+        <div className={locked ? "status-pill status-locked" : "status-pill"}>
           <ShieldCheck size={18} />
           {locked ? "Bloqueado" : "Chave ativa"}
         </div>
@@ -607,7 +612,7 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
 
       <div className="pair-hero-copy">
         <h2>Conecte ao seu dispositivo local</h2>
-        <p>Escaneie este QR Code com o app desktop</p>
+        <p>Escaneie o QR Code exibido no PC</p>
       </div>
 
       {props.pairing && (
