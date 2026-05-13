@@ -17,8 +17,8 @@ export async function registerStorageRoutes(app: FastifyInstance, deps: {
       single: true,
       pooledCapacity: true,
       mirrored: true,
-      hybrid: false,
-      rebalance: false
+      hybrid: true,
+      rebalance: true
     }
   }));
 

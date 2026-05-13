@@ -46,13 +46,21 @@ export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRou
       return reply.code(400).send({ error: "MANIFEST_HASH_MISMATCH" });
     }
 
-    const usedBytes = await deps.storage.getUsedBytes();
+    const selectedPool = body.poolId
+      ? deps.storageManager.repositories.pools.find(body.poolId)
+      : deps.storageManager.repositories.pools.firstActive();
 
-    if (usedBytes + body.expectedEncryptedBytes > deps.config.spaceLimitBytes) {
+    if (!selectedPool || selectedPool.status === "disabled") {
+      return reply.code(409).send({ error: "STORAGE_POOL_NOT_FOUND", message: "Storage pool ativo nao encontrado." });
+    }
+
+    const usedBytes = selectedPool.usedBytes;
+
+    if (usedBytes + body.expectedEncryptedBytes > selectedPool.quotaBytes) {
       return reply.code(413).send({
-        error: "VAULT_LIMIT_EXCEEDED",
+        error: "STORAGE_QUOTA_EXCEEDED",
         usedBytes,
-        limitBytes: deps.config.spaceLimitBytes
+        limitBytes: selectedPool.quotaBytes
       });
     }
 
@@ -72,6 +80,8 @@ export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRou
     deps.uploadsRepository.create({
       uploadId,
       fileId,
+      poolId: selectedPool.id,
+      vaultKeyId: body.vaultKeyId,
       totalChunks: body.totalChunks,
       chunkSize: body.chunkSize,
       expectedEncryptedBytes: body.expectedEncryptedBytes,
@@ -119,30 +129,33 @@ export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRou
       }
 
       const plainChunkHash = request.headers["x-kazvault-plain-chunk-sha256"];
-      const defaultPool = deps.storageManager.repositories.pools.firstActive();
+      const defaultPool = upload.poolId
+        ? deps.storageManager.repositories.pools.find(upload.poolId)
+        : deps.storageManager.repositories.pools.firstActive();
 
       if (!defaultPool) {
         return reply.code(409).send({ error: "STORAGE_POOL_NOT_FOUND", message: "Nenhum storage pool ativo configurado." });
       }
 
       if (typeof plainChunkHash === "string" && /^[a-f0-9]{64}$/i.test(plainChunkHash)) {
-        const existing = deps.chunksRepository.findIndexedChunk(plainChunkHash);
+        const storageChunkHash = deriveStorageChunkHash(plainChunkHash, upload.vaultKeyId);
+        const existing = deps.chunksRepository.findIndexedChunk(storageChunkHash);
 
         if (existing) {
           deps.chunksRepository.mapFileChunk({
             fileId: upload.fileId,
             chunkIndex: index,
-            chunkHash: plainChunkHash,
+            chunkHash: storageChunkHash,
             deduplicated: true
           });
         } else {
           await deps.storageManager.chunks.storeChunk({
             poolId: defaultPool.id,
-            chunkHash: plainChunkHash,
+            chunkHash: storageChunkHash,
             encryptedBuffer: body
           });
           deps.chunksRepository.indexChunk({
-            chunkHash: plainChunkHash,
+            chunkHash: storageChunkHash,
             fileId: upload.fileId,
             chunkIndex: index,
             sizeBytes: body.byteLength,
@@ -151,7 +164,7 @@ export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRou
           deps.chunksRepository.mapFileChunk({
             fileId: upload.fileId,
             chunkIndex: index,
-            chunkHash: plainChunkHash,
+            chunkHash: storageChunkHash,
             deduplicated: false
           });
         }
@@ -263,5 +276,13 @@ function validateInit(body: UploadInitRequest | undefined): string | undefined {
     return "Tamanho esperado invalido.";
   }
 
+  if (body.vaultKeyId !== undefined && !/^[a-f0-9]{64}$/i.test(body.vaultKeyId)) {
+    return "Identificador da chave do cofre invalido.";
+  }
+
   return undefined;
+}
+
+function deriveStorageChunkHash(plainChunkHash: string, vaultKeyId?: string): string {
+  return vaultKeyId ? sha256Hex(Buffer.from(`${vaultKeyId}:${plainChunkHash}`, "utf8")) : plainChunkHash;
 }

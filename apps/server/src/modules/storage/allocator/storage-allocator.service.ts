@@ -2,12 +2,12 @@ import { StorageError } from "../storage.errors";
 import type { StorageLocation, StoragePool } from "../storage.types";
 import { getAvailableBytes } from "../quota/quota.types";
 import type { QuotaGuardService } from "../quota/quota-guard.service";
-import { onlineWritableLocations, sortByAvailableBytes, type AllocationPlan } from "./allocation-strategy";
+import { onlineWritableLocations, sortByAvailableBytes, type AllocationContext, type AllocationPlan } from "./allocation-strategy";
 
 export class StorageAllocatorService {
   constructor(private readonly quotaGuard: QuotaGuardService) {}
 
-  async selectTargets(pool: StoragePool, locations: StorageLocation[], chunkSize: number): Promise<AllocationPlan> {
+  async selectTargets(pool: StoragePool, locations: StorageLocation[], chunkSize: number, context: AllocationContext = {}): Promise<AllocationPlan> {
     const mode = pool.mode === "hybrid" ? "hybrid" : pool.mode;
 
     switch (mode) {
@@ -18,7 +18,7 @@ export class StorageAllocatorService {
       case "mirrored":
         return this.selectMirrorTargets(pool, locations, chunkSize);
       case "hybrid":
-        return this.selectHybridTargets(pool, locations, chunkSize);
+        return this.selectHybridTargets(pool, locations, chunkSize, context);
     }
   }
 
@@ -95,7 +95,33 @@ export class StorageAllocatorService {
     };
   }
 
-  async selectHybridTargets(pool: StoragePool, locations: StorageLocation[], chunkSize: number): Promise<AllocationPlan> {
+  async selectHybridTargets(pool: StoragePool, locations: StorageLocation[], chunkSize: number, context: AllocationContext = {}): Promise<AllocationPlan> {
+    if (shouldMirrorHybrid(context)) {
+      try {
+        const plan = await this.selectMirrorTargets(pool, locations, chunkSize);
+
+        return {
+          ...plan,
+          mode: "hybrid",
+          warnings: [
+            ...plan.warnings,
+            "Smart Pool espelhou este chunk por regra de importancia/tipo."
+          ]
+        };
+      } catch {
+        const fallback = await this.selectCapacityTargets(pool, locations, chunkSize);
+
+        return {
+          ...fallback,
+          mode: "hybrid",
+          warnings: [
+            ...fallback.warnings,
+            "Smart Pool queria espelhar este chunk, mas nao havia duas locations elegiveis."
+          ]
+        };
+      }
+    }
+
     const plan = await this.selectCapacityTargets(pool, locations, chunkSize);
 
     return {
@@ -103,8 +129,29 @@ export class StorageAllocatorService {
       mode: "hybrid",
       warnings: [
         ...plan.warnings,
-        "Smart Pool esta preparado para regras futuras; hoje opera como Capacidade Maxima."
+        "Smart Pool salvou este chunk em capacidade por regra de tamanho/tipo."
       ]
     };
   }
+}
+
+function shouldMirrorHybrid(context: AllocationContext): boolean {
+  if (context.importance === "critical" || context.importance === "important") {
+    return true;
+  }
+
+  const mimeType = context.sourceMimeType?.toLowerCase() ?? "";
+  const fileName = context.sourceFileName?.toLowerCase() ?? "";
+  const plainSizeBytes = context.plainSizeBytes ?? 0;
+  const importantExtensions = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".json", ".csv"];
+
+  if (mimeType.startsWith("text/") || mimeType.includes("pdf") || mimeType.includes("document") || mimeType.includes("spreadsheet")) {
+    return true;
+  }
+
+  if (importantExtensions.some((extension) => fileName.endsWith(extension))) {
+    return true;
+  }
+
+  return plainSizeBytes > 0 && plainSizeBytes <= 16 * 1024 * 1024 && !mimeType.startsWith("video/");
 }

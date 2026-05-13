@@ -4,6 +4,8 @@ import type { VaultDatabase } from "../db/database";
 export interface UploadRecord {
   id: string;
   fileId: string;
+  poolId?: string;
+  vaultKeyId?: string;
   totalChunks: number;
   chunkSize: number;
   expectedEncryptedBytes: number;
@@ -16,6 +18,8 @@ export interface UploadRecord {
 type UploadRow = {
   id: string;
   file_id: string;
+  pool_id?: string | null;
+  vault_key_id?: string | null;
   total_chunks: number;
   chunk_size: number;
   expected_encrypted_bytes: number;
@@ -31,6 +35,8 @@ export class UploadsRepository {
   create(input: {
     uploadId: string;
     fileId: string;
+    poolId?: string;
+    vaultKeyId?: string;
     totalChunks: number;
     chunkSize: number;
     expectedEncryptedBytes: number;
@@ -39,14 +45,16 @@ export class UploadsRepository {
     this.db.run(
       `
         INSERT INTO uploads (
-          id, file_id, total_chunks, chunk_size, expected_encrypted_bytes,
+          id, file_id, pool_id, vault_key_id, total_chunks, chunk_size, expected_encrypted_bytes,
           received_chunks, status, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, '[]', 'pending', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '[]', 'pending', ?, ?)
       `,
       [
         input.uploadId,
         input.fileId,
+        input.poolId ?? null,
+        input.vaultKeyId ?? null,
         input.totalChunks,
         input.chunkSize,
         input.expectedEncryptedBytes,
@@ -108,6 +116,8 @@ function mapUpload(row: UploadRow): UploadRecord {
   return {
     id: row.id,
     fileId: row.file_id,
+    poolId: row.pool_id ?? undefined,
+    vaultKeyId: row.vault_key_id ?? undefined,
     totalChunks: row.total_chunks,
     chunkSize: row.chunk_size,
     expectedEncryptedBytes: row.expected_encrypted_bytes,

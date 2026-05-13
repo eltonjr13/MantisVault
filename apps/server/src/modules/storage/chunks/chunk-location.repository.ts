@@ -79,6 +79,10 @@ export class ChunkLocationRepository {
     return this.find(input.chunkHash, input.locationId)!;
   }
 
+  delete(chunkHash: string, locationId: string): void {
+    this.db.run("DELETE FROM chunk_locations WHERE chunk_hash = ? AND location_id = ?", [chunkHash, locationId]);
+  }
+
   hasExclusiveChunks(locationId: string): boolean {
     const row = this.db.get<{ count: number }>(
       `

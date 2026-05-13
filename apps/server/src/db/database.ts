@@ -86,6 +86,8 @@ export class VaultDatabase {
       CREATE TABLE IF NOT EXISTS uploads (
         id TEXT PRIMARY KEY,
         file_id TEXT NOT NULL,
+        pool_id TEXT,
+        vault_key_id TEXT,
         total_chunks INTEGER NOT NULL,
         chunk_size INTEGER NOT NULL,
         expected_encrypted_bytes INTEGER NOT NULL,
@@ -95,6 +97,9 @@ export class VaultDatabase {
         updated_at TEXT NOT NULL
       );
     `);
+
+    this.ensureColumn("uploads", "pool_id", "TEXT");
+    this.ensureColumn("uploads", "vault_key_id", "TEXT");
 
     this.db.run(`
       CREATE TABLE IF NOT EXISTS chunk_index (

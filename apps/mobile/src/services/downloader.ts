@@ -27,11 +27,7 @@ export async function loadVaultFileMetadata(input: {
   masterKey: Uint8Array;
 }): Promise<VaultFileMetadata> {
   const manifestEnvelope = await getFileManifest(input.pairing, input.fileId);
-  const manifest = await decryptJson<FileManifestPlaintext>(
-    manifestEnvelope.encryptedManifestBase64,
-    input.masterKey,
-    "kazvault:manifest"
-  );
+  const manifest = await decryptManifest(manifestEnvelope.encryptedManifestBase64, input.masterKey, input.fileId);
 
   return {
     fileName: manifest.originalName || `kazvault-${input.fileId}`,
@@ -78,11 +74,7 @@ export async function downloadAndRestoreFile(input: {
       manifest.chunkAadMode === "content-hash" && manifest.chunkHashes?.[index]
         ? `kazvault:chunk:${manifest.chunkHashes[index]}`
         : `kazvault:chunk:${manifestEnvelope.uploadId}:${index}`;
-    const compressedChunk = await decryptBytes(
-      encryptedChunk,
-      input.masterKey,
-      aad
-    );
+    const compressedChunk = await decryptChunk(encryptedChunk, input.masterKey, aad, index);
 
     if (isWholeFileCompression) {
       compressedChunks.push(compressedChunk);
@@ -141,4 +133,24 @@ function concatBytes(chunks: Uint8Array[], totalSize: number): Uint8Array {
 
 function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+async function decryptManifest(encryptedManifestBase64: string, masterKey: Uint8Array, fileId: string): Promise<FileManifestPlaintext> {
+  try {
+    return await decryptJson<FileManifestPlaintext>(encryptedManifestBase64, masterKey, "kazvault:manifest");
+  } catch (reason) {
+    throw new Error(
+      `Nao foi possivel abrir o manifest do arquivo ${fileId}. A chave ativa nao e a mesma usada no upload. Recupere o cofre com a chave correta ou refaca o upload.`
+    );
+  }
+}
+
+async function decryptChunk(encryptedChunk: Uint8Array, masterKey: Uint8Array, aad: string, index: number): Promise<Uint8Array> {
+  try {
+    return await decryptBytes(encryptedChunk, masterKey, aad);
+  } catch (reason) {
+    throw new Error(
+      `Nao foi possivel descriptografar o chunk ${index + 1}. Ele pode ter sido salvo com outra chave antes da correcao; refaca o upload desse arquivo.`
+    );
+  }
 }

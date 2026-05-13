@@ -46,6 +46,7 @@ export async function uploadEncryptedFile(input: {
   file: File;
   masterKey: Uint8Array;
   pairing: PairPayload;
+  poolId?: string;
   resume: UploadResumeState;
   signal?: AbortSignal;
   onProgress: (event: UploadProgressEvent) => void;
@@ -66,6 +67,7 @@ export async function uploadEncryptedFile(input: {
   let candidateCompressedSize = 0;
 
   const originalHash = await hashFile(input.file);
+  const vaultKeyId = await deriveVaultKeyId(input.masterKey);
 
   if (decision.shouldAttempt) {
     for (let index = 0; index < totalChunks; index += 1) {
@@ -115,6 +117,7 @@ export async function uploadEncryptedFile(input: {
     compressedChunkSizes,
     chunkHashes: finalChunkHashes,
     chunkAadMode: "content-hash",
+    vaultKeyId,
     optimizationMode: decision.optimizationMode,
     optimizationStrategy: useOptimized ? decision.strategy : "skip",
     optimized: useOptimized,
@@ -165,7 +168,9 @@ export async function uploadEncryptedFile(input: {
       manifestSha256,
       totalChunks,
       chunkSize: CHUNK_SIZE,
-      expectedEncryptedBytes
+      expectedEncryptedBytes,
+      vaultKeyId,
+      poolId: input.poolId
     });
 
     uploadId = upload.uploadId;
@@ -358,4 +363,12 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw new DOMException("Upload pausado.", "AbortError");
   }
+}
+
+async function deriveVaultKeyId(masterKey: Uint8Array): Promise<string> {
+  const prefix = new TextEncoder().encode("kazvault:vault-key-id:v1:");
+  const input = new Uint8Array(prefix.byteLength + masterKey.byteLength);
+  input.set(prefix, 0);
+  input.set(masterKey, prefix.byteLength);
+  return sha256Hex(input);
 }

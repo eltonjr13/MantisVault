@@ -12,6 +12,13 @@ export type AllocationPlan = {
   warnings: string[];
 };
 
+export type AllocationContext = {
+  sourceFileName?: string;
+  sourceMimeType?: string;
+  plainSizeBytes?: number;
+  importance?: "normal" | "important" | "critical";
+};
+
 export function onlineWritableLocations(locations: StorageLocation[]): StorageLocation[] {
   return locations.filter((location) => location.status === "online");
 }

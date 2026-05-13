@@ -28,7 +28,13 @@ export class ChunkStorageService {
     const plan = await this.allocator.selectTargets(
       input.preferredMode ? { ...pool, mode: input.preferredMode } : pool,
       locations,
-      input.encryptedBuffer.byteLength
+      input.encryptedBuffer.byteLength,
+      {
+        sourceFileName: input.sourceFileName,
+        sourceMimeType: input.sourceMimeType,
+        plainSizeBytes: input.plainSizeBytes,
+        importance: input.importance
+      }
     );
     const relativePath = this.relativeChunkPath(input.chunkHash);
     const written: Array<{ locationId: string; path: string; bytes: number }> = [];

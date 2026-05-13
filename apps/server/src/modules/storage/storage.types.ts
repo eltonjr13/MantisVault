@@ -97,6 +97,10 @@ export type StoreChunkInput = {
   chunkHash: string;
   encryptedBuffer: Buffer;
   preferredMode?: StoragePoolMode;
+  sourceFileName?: string;
+  sourceMimeType?: string;
+  plainSizeBytes?: number;
+  importance?: "normal" | "important" | "critical";
 };
 
 export type StoreChunkResult = {

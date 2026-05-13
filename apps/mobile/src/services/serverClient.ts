@@ -18,6 +18,82 @@ export interface RemoteVaultKeyring {
   createdAt: string;
 }
 
+export type ConnectorType =
+  | "local-files"
+  | "android-files"
+  | "mobile-contacts"
+  | "mobile-calendar"
+  | "gmail"
+  | "outlook"
+  | "imap"
+  | "manual-import";
+
+export type ConnectorStatus = "disconnected" | "connecting" | "connected" | "syncing" | "error" | "revoked";
+
+export type ConnectorSourceType =
+  | "file"
+  | "email"
+  | "email-attachment"
+  | "contact"
+  | "calendar-event"
+  | "photo"
+  | "video"
+  | "document";
+
+export interface ConnectorRecord {
+  id: string;
+  type: ConnectorType;
+  name: string;
+  accountIdentifier?: string;
+  status: ConnectorStatus;
+  syncCursor?: string;
+  lastSyncAt?: string;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConnectorItemRecord {
+  id: string;
+  connectorId: string;
+  sourceId: string;
+  sourceType: ConnectorSourceType;
+  title?: string;
+  mimeType?: string;
+  originalSize?: number;
+  originalHash?: string;
+  storedFileId?: string;
+  manifestId?: string;
+  importedAt: string;
+  updatedAt?: string;
+  deletedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ConnectorCapability {
+  type: ConnectorType;
+  name: string;
+  available: boolean;
+  localFirst: boolean;
+  encryptedCredentials: boolean;
+  env?: Record<string, boolean>;
+  notes?: string[];
+}
+
+export interface ConnectorSyncResult {
+  connectorId: string;
+  jobId: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  scanned: number;
+  imported: number;
+  skipped: number;
+  failed: number;
+  bytesImported: number;
+  nextCursor?: string;
+  warnings: string[];
+  errors: string[];
+}
+
 export type StoragePoolMode = "single" | "pooled-capacity" | "mirrored" | "hybrid";
 export type StoragePoolStatus = "active" | "readonly" | "degraded" | "error" | "disabled";
 export type StorageLocationStatus = "online" | "offline" | "readonly" | "full" | "error";
@@ -204,6 +280,110 @@ export async function deleteFile(pairing: PairPayload, fileId: string): Promise<
   });
 }
 
+export async function listConnectors(pairing: PairPayload): Promise<ConnectorRecord[]> {
+  const response = await requestJson<{ connectors: ConnectorRecord[] }>(pairing, "/api/connectors", {
+    method: "GET"
+  });
+
+  return response.connectors;
+}
+
+export async function getConnectorCapabilities(pairing: PairPayload): Promise<ConnectorCapability[]> {
+  const response = await requestJson<{ capabilities: ConnectorCapability[] }>(pairing, "/api/connectors/capabilities", {
+    method: "GET"
+  });
+
+  return response.capabilities;
+}
+
+export async function getConnectorItems(pairing: PairPayload, connectorId: string): Promise<ConnectorItemRecord[]> {
+  const response = await requestJson<{ items: ConnectorItemRecord[] }>(pairing, `/api/connectors/${connectorId}/items`, {
+    method: "GET"
+  });
+
+  return response.items;
+}
+
+export async function startConnectorSync(pairing: PairPayload, connectorId: string, body: {
+  fullSync?: boolean;
+  cursor?: string;
+  limit?: number;
+  dryRun?: boolean;
+} = {}): Promise<ConnectorSyncResult> {
+  return requestJson<ConnectorSyncResult>(pairing, `/api/connectors/${connectorId}/sync`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+export async function disconnectConnector(pairing: PairPayload, connectorId: string, deleteData = false): Promise<void> {
+  await requestJson(pairing, `/api/connectors/${connectorId}/disconnect`, {
+    method: "POST",
+    body: JSON.stringify({ deleteData })
+  });
+}
+
+export async function startGmailConnector(pairing: PairPayload): Promise<{ authUrl: string }> {
+  return requestJson(pairing, "/api/connectors/gmail/start", {
+    method: "POST"
+  });
+}
+
+export async function connectImapConnector(pairing: PairPayload, input: {
+  host: string;
+  port: number;
+  secure: boolean;
+  email: string;
+  appPassword: string;
+}): Promise<ConnectorRecord> {
+  return requestJson(pairing, "/api/connectors/imap/connect", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function importContactsVcf(pairing: PairPayload, input: { file: File; deviceId: string }): Promise<ConnectorSyncResult> {
+  const body = new FormData();
+  body.append("file", input.file);
+  body.append("deviceId", input.deviceId);
+
+  return requestJson(pairing, "/api/connectors/mobile-contacts/import-vcf", {
+    method: "POST",
+    body
+  });
+}
+
+export async function importContactsJson(pairing: PairPayload, input: {
+  deviceId: string;
+  contacts: Array<{ id?: string; displayName?: string; phones?: string[]; emails?: string[] }>;
+}): Promise<ConnectorSyncResult> {
+  return requestJson(pairing, "/api/connectors/mobile-contacts/import-json", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function importCalendarIcs(pairing: PairPayload, input: { file: File; deviceId: string }): Promise<ConnectorSyncResult> {
+  const body = new FormData();
+  body.append("file", input.file);
+  body.append("deviceId", input.deviceId);
+
+  return requestJson(pairing, "/api/connectors/mobile-calendar/import-ics", {
+    method: "POST",
+    body
+  });
+}
+
+export async function importCalendarJson(pairing: PairPayload, input: {
+  deviceId: string;
+  events: Array<{ id?: string; title?: string; start?: string; end?: string; location?: string }>;
+}): Promise<ConnectorSyncResult> {
+  return requestJson(pairing, "/api/connectors/mobile-calendar/import-json", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export async function listStoragePools(pairing: PairPayload): Promise<StoragePool[]> {
   const response = await requestJson<{ pools: StoragePool[] }>(pairing, "/api/storage/pools", {
     method: "GET"
@@ -276,7 +456,7 @@ async function requestJson<T>(pairing: PairPayload, path: string, init: RequestI
   const headers = new Headers(init.headers);
   headers.set("x-kazvault-token", pairing.token);
 
-  if (init.body && !(init.body instanceof Uint8Array) && !headers.has("content-type")) {
+  if (init.body && !(init.body instanceof Uint8Array) && !(init.body instanceof FormData) && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 

@@ -77,6 +77,8 @@ export interface UploadInitRequest {
   totalChunks: number;
   chunkSize: number;
   expectedEncryptedBytes: number;
+  poolId?: string;
+  vaultKeyId?: string;
 }
 
 export interface UploadInitResponse {
@@ -109,6 +111,7 @@ export interface FileManifestPlaintext {
   compressedChunkSizes?: number[];
   chunkHashes?: string[];
   chunkAadMode?: "legacy-upload-index" | "content-hash";
+  vaultKeyId?: string;
   optimizationMode?: OptimizationMode;
   optimizationStrategy?: OptimizationStrategy;
   optimized?: boolean;

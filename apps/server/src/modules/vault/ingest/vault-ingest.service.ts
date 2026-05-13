@@ -93,7 +93,11 @@ export class VaultIngestService {
         const stored = await this.storageManager.chunks.storeChunk({
           poolId: defaultPool.id,
           chunkHash,
-          encryptedBuffer: encrypted
+          encryptedBuffer: encrypted,
+          sourceFileName: source.fileName,
+          sourceMimeType: source.mimeType,
+          plainSizeBytes: chunk.byteLength,
+          importance: source.sourceType === "contact" || source.sourceType === "calendar-event" ? "important" : "normal"
         });
         this.chunksRepository.indexChunk({
           chunkHash,

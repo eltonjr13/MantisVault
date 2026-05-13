@@ -9,8 +9,6 @@ import type { PairingService } from "../services/pairingService";
 import type { LogService } from "../services/logService";
 import type { StorageManagerModule } from "../modules/storage/storage.service";
 import { requirePairToken } from "./auth";
-import { saveStorageDirSetting } from "../config/config";
-import { isAbsolute } from "node:path";
 import { getAvailableOptimizers } from "../vault/optimizer/dependency-checker";
 
 interface VaultRouteDeps {
@@ -28,16 +26,27 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
   const auth = requirePairToken(deps.pairingService);
 
   app.get("/api/vault/stats", { preHandler: auth }, async () => {
-    const usedBytes = await deps.storage.getUsedBytes();
-    const disk = await deps.storage.getDiskStats();
+    const activePool = deps.storageManager.repositories.pools.firstActive();
+    const activeLocations = activePool ? deps.storageManager.repositories.locations.listAllByPool(activePool.id) : [];
+    const primaryLocation = activeLocations[0];
+    const poolDisk = primaryLocation
+      ? await deps.storageManager.diskUsage.getDiskUsage(primaryLocation.rootPath)
+      : undefined;
+    const legacyDisk = !poolDisk ? await deps.storage.getDiskStats() : undefined;
+    const usedBytes = activePool?.usedBytes ?? await deps.storage.getUsedBytes();
+    const limitBytes = activePool?.quotaBytes ?? deps.config.spaceLimitBytes;
+    const diskTotalBytes = poolDisk?.totalBytes ?? legacyDisk?.totalBytes;
+    const diskFreeBytes = poolDisk?.availableBytes ?? legacyDisk?.freeBytes;
+    const diskUsedBytes = poolDisk?.usedBytes ?? legacyDisk?.usedBytes;
+
     const response: VaultStats = {
-      storageDir: deps.storage.storageDir,
-      limitBytes: deps.config.spaceLimitBytes,
+      storageDir: primaryLocation?.rootPath ?? deps.storage.storageDir,
+      limitBytes,
       usedBytes,
-      remainingBytes: Math.max(0, deps.config.spaceLimitBytes - usedBytes),
-      diskTotalBytes: disk?.totalBytes,
-      diskFreeBytes: disk?.freeBytes,
-      diskUsedBytes: disk?.usedBytes,
+      remainingBytes: Math.max(0, limitBytes - usedBytes),
+      diskTotalBytes,
+      diskFreeBytes,
+      diskUsedBytes,
       fileCount: deps.filesRepository.countCompleted()
     };
 
@@ -45,8 +54,10 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
   });
 
   app.get("/api/vault/settings", { preHandler: auth }, async () => {
+    const activePool = deps.storageManager.repositories.pools.firstActive();
+    const activeLocations = activePool ? deps.storageManager.repositories.locations.listAllByPool(activePool.id) : [];
     const response: VaultSettings = {
-      storageDir: deps.storage.storageDir
+      storageDir: activeLocations[0]?.rootPath ?? deps.storage.storageDir
     };
 
     return response;
@@ -68,24 +79,10 @@ export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRoute
       return reply.code(400).send({ error: "INVALID_STORAGE_DIR", message: "Pasta de armazenamento ausente." });
     }
 
-    if (!isAbsolute(storageDir)) {
-      return reply.code(400).send({ error: "INVALID_STORAGE_DIR", message: "Use um caminho absoluto, como E:/cloudkz." });
-    }
-
-    try {
-      await deps.storage.updateStorageDir(storageDir);
-    } catch {
-      return reply.code(400).send({ error: "INVALID_STORAGE_DIR", message: "Nao foi possivel criar ou acessar esta pasta." });
-    }
-
-    saveStorageDirSetting(deps.config.settingsPath, storageDir);
-    await deps.log.info("vault_storage_dir_updated", { storageDir });
-
-    const response: VaultSettings = {
-      storageDir: deps.storage.storageDir
-    };
-
-    return response;
+    return reply.code(409).send({
+      error: "STORAGE_SETTINGS_MOVED",
+      message: "A configuracao de armazenamento foi movida para /api/storage/pools. Use a aba Storage."
+    });
   });
 
   app.get("/api/files", { preHandler: auth }, async () => {

@@ -8,8 +8,10 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
+const Fastify = require("fastify");
 const { VaultDatabase } = require("../dist/db/database.js");
 const { buildStorageManagerModule } = require("../dist/modules/storage/storage.service.js");
+const { registerStorageRoutes } = require("../dist/modules/storage/storage.routes.js");
 const { StorageError } = require("../dist/modules/storage/storage.errors.js");
 
 const GB = 1024 * 1024 * 1024;
@@ -186,6 +188,107 @@ test("remove location bloqueia chunks exclusivos", async () => {
   });
 });
 
+test("hybrid espelha documentos e usa Smart Pool por tipo", async () => {
+  await withStorage(async ({ dir, storage }) => {
+    const created = await storage.pools.create({
+      name: "Smart",
+      mode: "hybrid",
+      quotaBytes: 4 * GB,
+      reservedFreeBytes: 0,
+      locations: [
+        { label: "A", rootPath: join(dir, "smart-a"), quotaBytes: 2 * GB, reservedFreeBytes: 0 },
+        { label: "B", rootPath: join(dir, "smart-b"), quotaBytes: 2 * GB, reservedFreeBytes: 0 }
+      ]
+    });
+    const result = await storage.chunks.storeChunk({
+      poolId: created.pool.id,
+      chunkHash: sha(Buffer.from("document")),
+      encryptedBuffer: Buffer.from("document"),
+      sourceFileName: "contrato.pdf",
+      sourceMimeType: "application/pdf",
+      plainSizeBytes: 8
+    });
+
+    assert.equal(result.storageMode, "hybrid");
+    assert.equal(result.locations.length, 2);
+  });
+});
+
+test("rebalance executa copia validada antes de remover origem", async () => {
+  await withStorage(async ({ dir, storage }) => {
+    const created = await storage.pools.create({
+      name: "Rebalance",
+      mode: "pooled-capacity",
+      quotaBytes: 6 * GB,
+      reservedFreeBytes: 0,
+      locations: [
+        { label: "A", rootPath: join(dir, "rebalance-a"), quotaBytes: 5 * GB, reservedFreeBytes: 0 },
+        { label: "B", rootPath: join(dir, "rebalance-b"), quotaBytes: 2 * GB, reservedFreeBytes: 0 }
+      ]
+    });
+    const hash = sha(Buffer.from("move-me"));
+    await storage.chunks.storeChunk({
+      poolId: created.pool.id,
+      chunkHash: hash,
+      encryptedBuffer: Buffer.from("move-me")
+    });
+
+    const plan = storage.rebalance.plan(created.pool.id);
+    assert.equal(plan.executable, true);
+    const executed = await storage.rebalance.queue(created.pool.id);
+    assert.equal(executed.status, "completed");
+    assert.equal(executed.executedMoves.length > 0, true);
+    const records = storage.repositories.chunkLocations.listByHash(hash);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].locationId, created.locations.find((location) => location.label === "B").id);
+    assert.deepEqual(await storage.chunks.readChunk(hash), Buffer.from("move-me"));
+  });
+});
+
+test("storage routes respondem JSON padronizado com autenticacao", async () => {
+  await withStorage(async ({ dir, storage }) => {
+    const app = Fastify();
+    await registerStorageRoutes(app, {
+      storageManager: storage,
+      pairingService: { verify: (token) => token === "test-token" }
+    });
+
+    const unauthorized = await app.inject({ method: "GET", url: "/api/storage/pools" });
+    assert.equal(unauthorized.statusCode, 401);
+
+    const headers = { "x-kazvault-token": "test-token" };
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/storage/pools",
+      headers,
+      payload: {
+        name: "HTTP Pool",
+        mode: "single",
+        quotaBytes: 2 * GB,
+        reservedFreeBytes: 0,
+        locations: [{ label: "HTTP", rootPath: join(dir, "http-pool"), quotaBytes: 2 * GB, reservedFreeBytes: 0 }]
+      }
+    });
+    assert.equal(created.statusCode, 201);
+    const createdBody = created.json();
+    assert.equal(createdBody.pool.name, "HTTP Pool");
+
+    const list = await app.inject({ method: "GET", url: "/api/storage/pools", headers });
+    assert.equal(list.statusCode, 200);
+    assert.equal(list.json().pools.length, 1);
+
+    const usage = await app.inject({ method: "GET", url: `/api/storage/pools/${createdBody.pool.id}/usage`, headers });
+    assert.equal(usage.statusCode, 200);
+    assert.equal(usage.json().pool.id, createdBody.pool.id);
+
+    const capabilities = await app.inject({ method: "GET", url: "/api/storage/capabilities", headers });
+    assert.equal(capabilities.statusCode, 200);
+    assert.equal(capabilities.json().capabilities.rebalance, true);
+
+    await app.close();
+  });
+});
+
 async function withStorage(callback) {
   const dir = await mkdtemp(join(tmpdir(), "kazvault-storage-"));
   const db = new VaultDatabase(join(dir, ".kazvault", "kazvault.sqlite"));
@@ -202,3 +305,4 @@ async function withStorage(callback) {
 function sha(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
+ 
