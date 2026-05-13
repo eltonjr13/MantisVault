@@ -1,12 +1,10 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
-  "/dashboard/page": "app/dashboard/page.js",
-  "/analytics/page": "app/analytics/page.js",
-  "/connect/page": "app/connect/page.js",
-  "/page": "app/page.js",
   "/security/page": "app/security/page.js",
-  "/files/page": "app/files/page.js",
   "/transfer/page": "app/transfer/page.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/files/page": "app/files/page.js",
+  "/files/[id]/page": "app/files/[id]/page.js",
   "/upload/page": "app/upload/page.js",
-  "/files/[id]/page": "app/files/[id]/page.js"
+  "/connect/page": "app/connect/page.js"
 }

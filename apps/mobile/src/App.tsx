@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import type { CompressionAlgorithm, PairPayload, UploadStatus, VaultFileRecord, VaultStats } from "@kazvault/shared";
 import {
+  applyStoredSession,
   clearPairPayloadFromCurrentUrl,
   clearPairing,
   loadPairing,
@@ -189,10 +190,10 @@ export function App() {
   }
 
   const handlePairingCallback = useCallback(async (payload: PairPayload): Promise<void> => {
-    updatePairing(payload);
-    await confirmPairing(payload).catch(() => undefined);
+    const sessionPairing = await confirmPairing(payload).catch(() => payload);
+    updatePairing(sessionPairing);
 
-    const remoteKeyring = await getRemoteVaultKeyring(payload);
+    const remoteKeyring = await getRemoteVaultKeyring(sessionPairing);
     const localKeyring = getStoredKeyring();
 
     if (remoteKeyring && !keyringMatchesRemote(localKeyring, remoteKeyring)) {
@@ -206,11 +207,23 @@ export function App() {
     const result = await ensureLocalVault();
 
     if (result.created && !remoteKeyring) {
-      await saveRemoteVaultKeyring(payload, getRecoveryKeyPackage()).catch(() => undefined);
+      await saveRemoteVaultKeyring(sessionPairing, getRecoveryKeyPackage()).catch(() => undefined);
     }
 
     setActiveTab(result.created ? "security" : "upload");
   }, [masterKey]);
+
+  useEffect(() => {
+    const handleSessionRefresh = () => {
+      setPairing((current) => (current ? applyStoredSession(current) : current));
+    };
+
+    window.addEventListener("kazvault:session-refreshed", handleSessionRefresh);
+
+    return () => {
+      window.removeEventListener("kazvault:session-refreshed", handleSessionRefresh);
+    };
+  }, []);
 
   useEffect(() => {
     if (!masterKey && hasKeyring() && hasDeviceUnlock()) {
@@ -369,6 +382,32 @@ function TabButton(props: { icon: JSX.Element; label: string; active: boolean; o
       <span>{props.label}</span>
     </button>
   );
+}
+
+function useAutoRefresh(refresh: () => Promise<void> | void, deps: ReadonlyArray<unknown>) {
+  useEffect(() => {
+    const run = () => {
+      if (navigator.onLine === false) {
+        return;
+      }
+
+      void Promise.resolve(refresh()).catch(() => undefined);
+    };
+    const runWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        run();
+      }
+    };
+
+    run();
+    window.addEventListener("online", run);
+    document.addEventListener("visibilitychange", runWhenVisible);
+
+    return () => {
+      window.removeEventListener("online", run);
+      document.removeEventListener("visibilitychange", runWhenVisible);
+    };
+  }, deps);
 }
 
 function SecurityPanel(props: {
@@ -559,17 +598,20 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
   }, []);
 
   return (
-    <section className="panel">
-      <div className="panel-heading">
-        <QrCode size={22} />
-        <div>
-          <h2>Pareamento</h2>
-          <p>Escaneie o QR mostrado no PC; sem copiar JSON.</p>
-        </div>
+    <section className="panel pair-connect-panel">
+      <div className="pair-mobile-title">
+        <Smartphone size={17} />
+        <span>Conectar Dispositivo</span>
+        <ShieldCheck size={17} />
+      </div>
+
+      <div className="pair-hero-copy">
+        <h2>Conecte ao seu dispositivo local</h2>
+        <p>Escaneie este QR Code com o app desktop</p>
       </div>
 
       {props.pairing && (
-        <div className="server-card">
+        <div className="server-card pair-server-card">
           <span>{props.pairing.serverName}</span>
           <strong>{props.pairing.baseUrl}</strong>
           <code>{props.pairing.fingerprint}</code>
@@ -580,7 +622,16 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
         </div>
       )}
 
-      <div className="pair-grid">
+      <div className={scannerActive ? "pair-scanner active" : "pair-scanner"}>
+        {!scannerActive && (
+          <div className="pair-qr-placeholder" aria-hidden="true">
+            <QrCode size={112} />
+          </div>
+        )}
+        <div id="qr-reader" className={scannerActive ? "qr-reader active" : "qr-reader"} />
+      </div>
+
+      <div className="pair-scan-actions">
         <button className="primary-button" type="button" onClick={() => void startScanner()} disabled={scannerActive}>
           <QrCode size={18} />
           Escanear QR
@@ -590,10 +641,10 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
         </button>
       </div>
 
-      <div id="qr-reader" className={scannerActive ? "qr-reader active" : "qr-reader"} />
+      <div className="pair-divider"><span />OU<span /></div>
 
       <form
-        className="form-grid"
+        className="form-grid pair-manual-form"
         onSubmit={(event) => {
           event.preventDefault();
           setError(undefined);
@@ -603,10 +654,11 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
         }}
       >
         <label>
-          URL do servidor
+          Digitar URL manualmente
           <input value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} inputMode="url" />
         </label>
         <button className="ghost-button" type="submit">
+          <Link2 size={18} />
           Buscar pareamento
         </button>
       </form>
@@ -629,10 +681,16 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
             <textarea value={qrText} onChange={(event) => setQrText(event.target.value)} rows={4} />
           </label>
           <button className="ghost-button" type="submit">
+            <Copy size={16} />
             Parear manualmente
           </button>
         </form>
       </details>
+
+      <div className="pair-status-strip">
+        <span>192.168.1.42</span>
+        <strong><ShieldCheck size={15} /> Segura</strong>
+      </div>
 
       {error && <p className="error-line">{error}</p>}
     </section>
@@ -723,9 +781,7 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
     }
   }
 
-  useEffect(() => {
-    void refresh();
-  }, [props.pairing?.baseUrl, props.pairing?.token]);
+  useAutoRefresh(() => refresh(), [props.pairing?.baseUrl, props.pairing?.token]);
 
   useEffect(() => {
     if (!props.pairing || !selectedConnectorId || items[selectedConnectorId]) {
@@ -1163,14 +1219,14 @@ function UploadPanel(props: {
     [storagePools]
   );
 
-  useEffect(() => {
+  useAutoRefresh(() => {
     if (!props.pairing) {
       setStoragePools([]);
       setSelectedPoolId(undefined);
       return;
     }
 
-    void listStoragePools(props.pairing)
+    return listStoragePools(props.pairing)
       .then((pools) => {
         setStoragePools(pools);
         const sorted = [...pools].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -1432,9 +1488,7 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
     }
   }
 
-  useEffect(() => {
-    void refresh();
-  }, [props.pairing?.baseUrl, props.pairing?.token, props.masterKey]);
+  useAutoRefresh(() => refresh(), [props.pairing?.baseUrl, props.pairing?.token, props.masterKey]);
 
   const usedPercent = useMemo(() => {
     const total = stats?.diskTotalBytes ?? stats?.limitBytes ?? 0;
@@ -1664,9 +1718,7 @@ function StoragePanel(props: { pairing?: PairPayload }) {
     }
   }
 
-  useEffect(() => {
-    void refresh();
-  }, [props.pairing?.baseUrl, props.pairing?.token]);
+  useAutoRefresh(() => refresh(), [props.pairing?.baseUrl, props.pairing?.token]);
 
   async function run(action: () => Promise<void>) {
     if (!props.pairing) {

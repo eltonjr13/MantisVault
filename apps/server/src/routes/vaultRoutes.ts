@@ -7,6 +7,7 @@ import type { StorageService } from "../services/storageService";
 import type { ServerConfig } from "../config/config";
 import type { PairingService } from "../services/pairingService";
 import type { LogService } from "../services/logService";
+import type { AuthSessionService } from "../services/authSessionService";
 import type { StorageManagerModule } from "../modules/storage/storage.service";
 import { requirePairToken } from "./auth";
 import { getAvailableOptimizers } from "../vault/optimizer/dependency-checker";
@@ -19,11 +20,12 @@ interface VaultRouteDeps {
   storageManager: StorageManagerModule;
   storage: StorageService;
   pairingService: PairingService;
+  authSessionService?: AuthSessionService;
   log: LogService;
 }
 
 export async function registerVaultRoutes(app: FastifyInstance, deps: VaultRouteDeps): Promise<void> {
-  const auth = requirePairToken(deps.pairingService);
+  const auth = requirePairToken(deps.pairingService, deps.authSessionService);
 
   app.get("/api/vault/stats", { preHandler: auth }, async () => {
     const activePool = deps.storageManager.repositories.pools.firstActive();

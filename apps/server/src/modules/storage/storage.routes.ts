@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { PairingService } from "../../services/pairingService";
+import type { AuthSessionService } from "../../services/authSessionService";
 import { requirePairToken } from "../../routes/auth";
 import type { StorageManagerModule } from "./storage.service";
 import type { AddStorageLocationInput, CreateStoragePoolInput, UpdateStoragePoolInput } from "./storage.types";
@@ -8,8 +9,9 @@ import { sendStorageError } from "./storage.controller";
 export async function registerStorageRoutes(app: FastifyInstance, deps: {
   storageManager: StorageManagerModule;
   pairingService: PairingService;
+  authSessionService?: AuthSessionService;
 }): Promise<void> {
-  const auth = requirePairToken(deps.pairingService);
+  const auth = requirePairToken(deps.pairingService, deps.authSessionService);
   const storage = deps.storageManager;
 
   app.get("/api/storage/capabilities", { preHandler: auth }, async () => ({

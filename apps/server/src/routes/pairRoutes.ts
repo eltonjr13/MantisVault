@@ -1,7 +1,9 @@
 import QRCode from "qrcode";
 import type { FastifyInstance } from "fastify";
+import type { AuthSession } from "@kazvault/shared";
 import type { PairingService } from "../services/pairingService";
 import type { LogService } from "../services/logService";
+import type { AuthSessionService } from "../services/authSessionService";
 
 const QR_REFRESH_SECONDS = 120;
 
@@ -25,7 +27,8 @@ interface PairQr {
 export async function registerPairRoutes(
   app: FastifyInstance,
   pairingService: PairingService,
-  log: LogService
+  log: LogService,
+  authSessionService?: AuthSessionService
 ): Promise<void> {
   app.post("/api/pair/start", async () => {
     const payload = pairingService.startPairing();
@@ -34,7 +37,8 @@ export async function registerPairRoutes(
   });
 
   app.post<{ Body: { token?: string; deviceName?: string } }>("/api/pair/confirm", async (request, reply) => {
-    const confirmed = pairingService.confirm(request.body?.token, request.body?.deviceName ?? "Celular");
+    const deviceName = request.body?.deviceName ?? "Celular";
+    const confirmed = pairingService.confirm(request.body?.token, deviceName);
 
     if (!confirmed) {
       return reply.code(401).send({
@@ -43,12 +47,22 @@ export async function registerPairRoutes(
       });
     }
 
-    await log.info("pairing_confirmed", { deviceName: request.body?.deviceName ?? "Celular" });
+    const authSession = authSessionService?.createAnonymousSession({ deviceName });
+    await log.info("pairing_confirmed", {
+      deviceName,
+      authMode: authSession ? "persistent_anonymous_session" : "pair_token"
+    });
 
-    return {
+    const response: { confirmed: true; confirmedAt: string; authSession?: AuthSession } = {
       confirmed: true,
       confirmedAt: new Date().toISOString()
     };
+
+    if (authSession) {
+      response.authSession = authSession;
+    }
+
+    return response;
   });
 
   app.get<{ Querystring: { token?: string } }>("/api/pair/status", async (request, reply) => {

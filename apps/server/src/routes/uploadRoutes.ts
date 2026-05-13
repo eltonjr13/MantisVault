@@ -13,6 +13,7 @@ import type { StorageService } from "../services/storageService";
 import type { LogService } from "../services/logService";
 import type { ServerConfig } from "../config/config";
 import type { PairingService } from "../services/pairingService";
+import type { AuthSessionService } from "../services/authSessionService";
 import type { StorageManagerModule } from "../modules/storage/storage.service";
 import { requirePairToken } from "./auth";
 import { sha256Hex } from "../utils/hash";
@@ -25,11 +26,12 @@ interface UploadRouteDeps {
   storageManager: StorageManagerModule;
   storage: StorageService;
   pairingService: PairingService;
+  authSessionService?: AuthSessionService;
   log: LogService;
 }
 
 export async function registerUploadRoutes(app: FastifyInstance, deps: UploadRouteDeps): Promise<void> {
-  const auth = requirePairToken(deps.pairingService);
+  const auth = requirePairToken(deps.pairingService, deps.authSessionService);
 
   app.post<{ Body: UploadInitRequest }>("/api/uploads/init", { preHandler: auth }, async (request, reply) => {
     const body = request.body;

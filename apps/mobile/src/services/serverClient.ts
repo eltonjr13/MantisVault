@@ -1,4 +1,5 @@
 import type {
+  AuthSession,
   PairPayload,
   UploadChunkResponse,
   UploadCompleteResponse,
@@ -9,6 +10,13 @@ import type {
   VaultSettings,
   VaultStats
 } from "@kazvault/shared";
+import {
+  clearAuthSession,
+  loadAuthSession,
+  replaceAuthSession,
+  saveAuthSession,
+  type StoredAuthSession
+} from "./pairing";
 
 export interface RemoteVaultKeyring {
   version: 1;
@@ -153,7 +161,7 @@ export async function fetchPairPayload(baseUrl: string): Promise<PairPayload> {
   return body.payload;
 }
 
-export async function confirmPairing(pairing: PairPayload): Promise<void> {
+export async function confirmPairing(pairing: PairPayload): Promise<PairPayload> {
   const deviceName = navigator.userAgent.includes("Android") ? "Android" : "Celular";
 
   const response = await fetch(`${trimSlash(pairing.baseUrl)}/api/pair/confirm`, {
@@ -167,7 +175,13 @@ export async function confirmPairing(pairing: PairPayload): Promise<void> {
     })
   });
 
-  await parseResponse(response);
+  const body = (await parseResponse(response)) as { authSession?: AuthSession };
+
+  if (!body.authSession) {
+    return pairing;
+  }
+
+  return saveAuthSession(pairing, body.authSession);
 }
 
 export async function initUpload(pairing: PairPayload, request: UploadInitRequest): Promise<UploadInitResponse> {
@@ -454,34 +468,115 @@ export async function planStorageRebalance(pairing: PairPayload, poolId: string)
 
 async function requestJson<T>(pairing: PairPayload, path: string, init: RequestInit): Promise<T> {
   const headers = new Headers(init.headers);
-  headers.set("x-kazvault-token", pairing.token);
 
   if (init.body && !(init.body instanceof Uint8Array) && !(init.body instanceof FormData) && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 
-  const response = await fetch(`${trimSlash(pairing.baseUrl)}${path}`, {
-    ...init,
-    headers
-  });
+  const response = await fetchWithSession(pairing, path, init, headers);
 
   return parseResponse(response) as Promise<T>;
 }
 
 async function requestBytes(pairing: PairPayload, path: string, init: RequestInit): Promise<Uint8Array> {
   const headers = new Headers(init.headers);
-  headers.set("x-kazvault-token", pairing.token);
 
-  const response = await fetch(`${trimSlash(pairing.baseUrl)}${path}`, {
-    ...init,
-    headers
-  });
+  const response = await fetchWithSession(pairing, path, init, headers);
 
   if (!response.ok) {
     await parseResponse(response);
   }
 
   return new Uint8Array(await response.arrayBuffer());
+}
+
+async function fetchWithSession(
+  pairing: PairPayload,
+  path: string,
+  init: RequestInit,
+  headers: Headers
+): Promise<Response> {
+  const response = await fetchWithToken(pairing, path, init, headers, await getRequestToken(pairing));
+
+  if (response.status !== 401) {
+    return response;
+  }
+
+  const session = loadAuthSession(pairing.baseUrl);
+
+  if (!session) {
+    return response;
+  }
+
+  const refreshed = await refreshAuthSession(session).catch(() => {
+    clearAuthSession();
+    return undefined;
+  });
+
+  return refreshed ? fetchWithToken(pairing, path, init, headers, refreshed.accessToken) : response;
+}
+
+async function fetchWithToken(
+  pairing: PairPayload,
+  path: string,
+  init: RequestInit,
+  headers: Headers,
+  token: string
+): Promise<Response> {
+  const nextHeaders = new Headers(headers);
+  nextHeaders.set("x-kazvault-token", token);
+
+  return fetch(`${trimSlash(pairing.baseUrl)}${path}`, {
+    ...init,
+    headers: nextHeaders
+  });
+}
+
+async function getRequestToken(pairing: PairPayload): Promise<string> {
+  const session = loadAuthSession(pairing.baseUrl);
+
+  if (!session) {
+    return pairing.token;
+  }
+
+  if (!isExpiringSoon(session.accessTokenExpiresAt)) {
+    return session.accessToken;
+  }
+
+  const refreshed = await refreshAuthSession(session).catch(() => {
+    clearAuthSession();
+    return undefined;
+  });
+
+  return refreshed?.accessToken ?? pairing.token;
+}
+
+async function refreshAuthSession(session: StoredAuthSession): Promise<StoredAuthSession> {
+  const response = await fetch(`${trimSlash(session.baseUrl)}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      refreshToken: session.refreshToken
+    })
+  });
+  const body = (await parseResponse(response)) as { authSession?: AuthSession };
+
+  if (!body.authSession) {
+    throw new Error("Sessao invalida.");
+  }
+
+  const next: StoredAuthSession = {
+    ...body.authSession,
+    baseUrl: session.baseUrl,
+    serverName: session.serverName,
+    fingerprint: session.fingerprint
+  };
+
+  replaceAuthSession(next);
+  window.dispatchEvent(new CustomEvent("kazvault:session-refreshed", { detail: { baseUrl: next.baseUrl } }));
+  return next;
 }
 
 async function parseResponse(response: Response): Promise<unknown> {
@@ -509,4 +604,8 @@ async function parseResponse(response: Response): Promise<unknown> {
 
 function trimSlash(value: string): string {
   return value.replace(/\/+$/g, "");
+}
+
+function isExpiringSoon(value: string): boolean {
+  return new Date(value).getTime() - Date.now() < 60_000;
 }

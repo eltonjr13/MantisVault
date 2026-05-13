@@ -252,6 +252,32 @@ export class VaultDatabase {
       );
     `);
 
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS auth_accounts (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        email TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS auth_device_sessions (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        device_name TEXT NOT NULL,
+        refresh_token_hash TEXT NOT NULL,
+        refresh_token_expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        last_seen_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (account_id) REFERENCES auth_accounts(id)
+      );
+    `);
+
     this.db.run("CREATE INDEX IF NOT EXISTS idx_connectors_type ON connectors(type);");
     this.db.run("CREATE INDEX IF NOT EXISTS idx_storage_locations_pool_id ON storage_locations(pool_id);");
     this.db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_locations_root ON storage_locations(root_path);");
@@ -266,6 +292,8 @@ export class VaultDatabase {
     this.db.run("CREATE INDEX IF NOT EXISTS idx_connector_items_original_hash ON connector_items(original_hash);");
     this.db.run("CREATE INDEX IF NOT EXISTS idx_connector_sync_jobs_connector_id ON connector_sync_jobs(connector_id);");
     this.db.run("CREATE INDEX IF NOT EXISTS idx_connector_credentials_connector_id ON connector_credentials(connector_id);");
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_auth_device_sessions_account ON auth_device_sessions(account_id);");
+    this.db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_device_sessions_refresh ON auth_device_sessions(refresh_token_hash);");
   }
 
   private persist(): void {

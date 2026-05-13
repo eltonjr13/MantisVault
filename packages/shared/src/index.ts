@@ -71,6 +71,16 @@ export interface PairPayload {
   fingerprint: string;
 }
 
+export interface AuthSession {
+  accountId: string;
+  deviceId: string;
+  accessToken: string;
+  accessTokenExpiresAt: string;
+  refreshToken: string;
+  refreshTokenExpiresAt: string;
+  sessionType: "anonymous";
+}
+
 export interface UploadInitRequest {
   encryptedManifestBase64: string;
   manifestSha256: string;

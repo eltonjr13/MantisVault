@@ -4,6 +4,7 @@ import type { ChunksRepository } from "../../repositories/chunksRepository";
 import type { StorageService } from "../../services/storageService";
 import type { LogService } from "../../services/logService";
 import type { PairingService } from "../../services/pairingService";
+import type { AuthSessionService } from "../../services/authSessionService";
 import type { StorageManagerModule } from "../storage/storage.service";
 import { requirePairToken } from "../../routes/auth";
 import { ConnectorRegistry } from "./connectors.registry";
@@ -34,11 +35,12 @@ interface ConnectorsRouteDeps {
   storageManager: StorageManagerModule;
   storage: StorageService;
   pairingService: PairingService;
+  authSessionService?: AuthSessionService;
   log: LogService;
 }
 
 export async function registerConnectorsRoutes(app: FastifyInstance, deps: ConnectorsRouteDeps): Promise<void> {
-  const auth = requirePairToken(deps.pairingService);
+  const auth = requirePairToken(deps.pairingService, deps.authSessionService);
   const module = buildConnectorsModule(deps);
   const {
     service,

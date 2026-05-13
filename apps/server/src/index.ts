@@ -9,11 +9,13 @@ import { ChunksRepository } from "./repositories/chunksRepository";
 import { registerPairRoutes } from "./routes/pairRoutes";
 import { registerUploadRoutes } from "./routes/uploadRoutes";
 import { registerVaultRoutes } from "./routes/vaultRoutes";
+import { registerAuthSessionRoutes } from "./routes/authSessionRoutes";
 import { registerConnectorsRoutes } from "./modules/connectors/connectors.routes";
 import { ConnectorsRepository } from "./modules/connectors/connectors.repository";
 import { buildStorageManagerModule } from "./modules/storage/storage.service";
 import { registerStorageRoutes } from "./modules/storage/storage.routes";
 import { LogService } from "./services/logService";
+import { AuthSessionService } from "./services/authSessionService";
 import { PairingService } from "./services/pairingService";
 import { StorageService } from "./services/storageService";
 
@@ -31,6 +33,7 @@ async function main(): Promise<void> {
   const chunksRepository = new ChunksRepository(db);
   const connectorsRepository = new ConnectorsRepository(db);
   const storageManager = buildStorageManagerModule(db);
+  const authSessionService = new AuthSessionService(db, `${storage.metaDir}/auth-secret`);
   await storageManager.pools.ensureDefaultPool({
     name: "MantisVault Vault",
     rootPath: storage.storageDir,
@@ -58,7 +61,13 @@ async function main(): Promise<void> {
   await app.register(cors, {
     origin: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["content-type", "x-kazvault-token", "x-chunk-sha256", "x-kazvault-plain-chunk-sha256"]
+    allowedHeaders: [
+      "authorization",
+      "content-type",
+      "x-kazvault-token",
+      "x-chunk-sha256",
+      "x-kazvault-plain-chunk-sha256"
+    ]
   });
 
   app.get("/health", async () => ({
@@ -66,7 +75,12 @@ async function main(): Promise<void> {
     app: "KazVault"
   }));
 
-  await registerPairRoutes(app, pairingService, log);
+  await registerPairRoutes(app, pairingService, log, authSessionService);
+  await registerAuthSessionRoutes(app, {
+    authSessionService,
+    pairingService,
+    log
+  });
   await registerUploadRoutes(app, {
     config,
     filesRepository,
@@ -75,6 +89,7 @@ async function main(): Promise<void> {
     storageManager,
     storage,
     pairingService,
+    authSessionService,
     log
   });
   await registerVaultRoutes(app, {
@@ -85,11 +100,13 @@ async function main(): Promise<void> {
     storageManager,
     storage,
     pairingService,
+    authSessionService,
     log
   });
   await registerStorageRoutes(app, {
     storageManager,
-    pairingService
+    pairingService,
+    authSessionService
   });
   await registerConnectorsRoutes(app, {
     dbRepository: connectorsRepository,
@@ -98,6 +115,7 @@ async function main(): Promise<void> {
     storageManager,
     storage,
     pairingService,
+    authSessionService,
     log
   });
 

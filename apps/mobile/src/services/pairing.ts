@@ -1,6 +1,13 @@
-import type { PairPayload } from "@kazvault/shared";
+import type { AuthSession, PairPayload } from "@kazvault/shared";
 
 const PAIRING_KEY = "kazvault:pairing:v1";
+const SESSION_KEY = "kazvault:session:v1";
+
+export interface StoredAuthSession extends AuthSession {
+  baseUrl: string;
+  serverName: string;
+  fingerprint: string;
+}
 
 export function savePairing(payload: PairPayload): void {
   localStorage.setItem(PAIRING_KEY, JSON.stringify(payload));
@@ -8,11 +15,72 @@ export function savePairing(payload: PairPayload): void {
 
 export function loadPairing(): PairPayload | undefined {
   const raw = localStorage.getItem(PAIRING_KEY);
-  return raw ? parsePairPayload(raw) : undefined;
+  const payload = raw ? parsePairPayload(raw) : undefined;
+  return payload ? applyStoredSession(payload) : undefined;
 }
 
 export function clearPairing(): void {
   localStorage.removeItem(PAIRING_KEY);
+  clearAuthSession();
+}
+
+export function saveAuthSession(pairing: PairPayload, authSession: AuthSession): PairPayload {
+  const stored: StoredAuthSession = {
+    ...authSession,
+    baseUrl: pairing.baseUrl,
+    serverName: pairing.serverName,
+    fingerprint: pairing.fingerprint
+  };
+
+  localStorage.setItem(SESSION_KEY, JSON.stringify(stored));
+  return applyStoredSession(pairing, stored);
+}
+
+export function loadAuthSession(baseUrl?: string): StoredAuthSession | undefined {
+  const raw = localStorage.getItem(SESSION_KEY);
+
+  if (!raw) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as StoredAuthSession;
+
+    if (
+      !parsed.baseUrl ||
+      (baseUrl && trimSlash(parsed.baseUrl) !== trimSlash(baseUrl)) ||
+      !parsed.accessToken ||
+      !parsed.refreshToken ||
+      !parsed.accessTokenExpiresAt ||
+      !parsed.refreshTokenExpiresAt
+    ) {
+      return undefined;
+    }
+
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+export function replaceAuthSession(authSession: StoredAuthSession): void {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(authSession));
+}
+
+export function clearAuthSession(): void {
+  localStorage.removeItem(SESSION_KEY);
+}
+
+export function applyStoredSession(payload: PairPayload, session = loadAuthSession(payload.baseUrl)): PairPayload {
+  if (!session) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    token: session.accessToken,
+    expiresAt: session.accessTokenExpiresAt
+  };
 }
 
 export function parsePairPayload(text: string): PairPayload {
@@ -75,4 +143,8 @@ function decodeBase64Url(value: string): string {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
   return new TextDecoder().decode(Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)));
+}
+
+function trimSlash(value: string): string {
+  return value.replace(/\/+$/g, "");
 }
