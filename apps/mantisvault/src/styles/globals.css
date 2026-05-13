@@ -1518,6 +1518,10 @@ select:focus-visible {
     flex-direction: column;
   }
 
+  .header > div:first-child {
+    width: 100%;
+  }
+
   .header h1,
   .hero-copy h1 {
     font-size: 2.35rem;
