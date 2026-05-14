@@ -2,7 +2,8 @@ import { existsSync } from "node:fs";
 import type { StoragePoolRepository } from "../pool/storage-pool.repository";
 import type { StorageLocationRepository } from "../locations/storage-location.repository";
 import type { DiskUsageService } from "./disk-usage.service";
-import type { StorageAlert, StorageLocation, StorageLocationStatus, StoragePoolStatus } from "../storage.types";
+import { findDiskForPath, type DiskHealthReader } from "./disk-health.service";
+import type { DiskHealthReport, StorageAlert, StorageLocation, StorageLocationStatus, StoragePoolStatus } from "../storage.types";
 import { getAvailableBytes } from "../quota/quota.types";
 import { StorageError } from "../storage.errors";
 
@@ -10,7 +11,8 @@ export class StorageHealthService {
   constructor(
     private readonly pools: StoragePoolRepository,
     private readonly locations: StorageLocationRepository,
-    private readonly diskUsage: DiskUsageService
+    private readonly diskUsage: DiskUsageService,
+    private readonly diskHealth: DiskHealthReader
   ) {}
 
   async checkPool(poolId: string) {
@@ -24,9 +26,14 @@ export class StorageHealthService {
     const checkedLocations = [];
     const alerts: StorageAlert[] = [];
     const now = new Date().toISOString();
+    let diskHealth: DiskHealthReport | undefined;
+    const readDiskHealth = async () => {
+      diskHealth ??= await this.diskHealth.checkAll();
+      return diskHealth;
+    };
 
     for (const location of locations) {
-      const checked = await this.checkLocation(location);
+      const checked = await this.checkLocation(location, readDiskHealth);
       checkedLocations.push(checked);
       this.locations.update(location.id, {
         status: checked.status,
@@ -60,6 +67,24 @@ export class StorageHealthService {
         });
       }
 
+      if (checked.status === "error") {
+        alerts.push({
+          code: "STORAGE_DISK_HARDWARE_CRITICAL",
+          severity: "critical",
+          message: "A saude fisica do disco indica falha ou risco critico.",
+          locationId: location.id
+        });
+      }
+
+      if (checked.disk?.hardwareHealth?.status === "warning") {
+        alerts.push({
+          code: "STORAGE_DISK_HARDWARE_WARNING",
+          severity: "warning",
+          message: "O SMART do disco retornou aviso. Recomendamos backup e troca preventiva.",
+          locationId: location.id
+        });
+      }
+
       if (location.isSystemDrive) {
         alerts.push({
           code: "STORAGE_SYSTEM_DRIVE",
@@ -68,6 +93,14 @@ export class StorageHealthService {
           locationId: location.id
         });
       }
+    }
+
+    if (diskHealth && !diskHealth.supported && diskHealth.warnings.length > 0) {
+      alerts.unshift({
+        code: "STORAGE_DISK_HEALTH_UNAVAILABLE",
+        severity: "info",
+        message: diskHealth.warnings[0]
+      });
     }
 
     const onlineCount = checkedLocations.filter((location) => location.status === "online").length;
@@ -97,7 +130,7 @@ export class StorageHealthService {
     };
   }
 
-  private async checkLocation(location: StorageLocation) {
+  private async checkLocation(location: StorageLocation, readDiskHealth: () => Promise<DiskHealthReport>) {
     if (!existsSync(location.rootPath)) {
       return {
         ...location,
@@ -111,12 +144,14 @@ export class StorageHealthService {
       return {
         ...location,
         status: "readonly" as const,
-        disk: await this.diskUsage.getDiskUsage(location.rootPath)
+        disk: await this.getDiskUsageWithHardware(location, await readDiskHealth())
       };
     }
 
-    const disk = await this.diskUsage.getDiskUsage(location.rootPath);
-    const status: StorageLocationStatus = getAvailableBytes(location) <= 0 || (disk.availableBytes > 0 && disk.availableBytes <= location.reservedFreeBytes)
+    const disk = await this.getDiskUsageWithHardware(location, await readDiskHealth());
+    const status: StorageLocationStatus = disk.hardwareHealth?.status === "critical"
+      ? "error"
+      : getAvailableBytes(location) <= 0 || (disk.availableBytes > 0 && disk.availableBytes <= location.reservedFreeBytes)
       ? "full"
       : "online";
 
@@ -125,5 +160,12 @@ export class StorageHealthService {
       status,
       disk
     };
+  }
+
+  private async getDiskUsageWithHardware(location: StorageLocation, diskHealth: DiskHealthReport) {
+    const disk = await this.diskUsage.getDiskUsage(location.rootPath);
+    const hardwareHealth = findDiskForPath(location.rootPath, diskHealth);
+
+    return hardwareHealth ? { ...disk, hardwareHealth } : disk;
   }
 }

@@ -1,4 +1,5 @@
 import { DiskUsageService } from "./health/disk-usage.service";
+import { DiskHealthService } from "./health/disk-health.service";
 import { StorageLocationValidator } from "./locations/storage-location-validator";
 import { QuotaGuardService } from "./quota/quota-guard.service";
 import { StorageAllocatorService } from "./allocator/storage-allocator.service";
@@ -17,6 +18,7 @@ export type StorageManagerModule = ReturnType<typeof buildStorageManagerModule>;
 
 export function buildStorageManagerModule(db: VaultDatabase) {
   const diskUsage = new DiskUsageService();
+  const diskHealth = new DiskHealthService();
   const validator = new StorageLocationValidator();
   const quotaGuard = new QuotaGuardService(diskUsage);
   const allocator = new StorageAllocatorService(quotaGuard);
@@ -26,12 +28,13 @@ export function buildStorageManagerModule(db: VaultDatabase) {
   const pools = new StoragePoolService(poolsRepository, locationsRepository, chunkLocationsRepository, validator);
   const locations = new StorageLocationService(locationsRepository);
   const chunks = new ChunkStorageService(poolsRepository, locationsRepository, chunkLocationsRepository, allocator);
-  const health = new StorageHealthService(poolsRepository, locationsRepository, diskUsage);
+  const health = new StorageHealthService(poolsRepository, locationsRepository, diskUsage, diskHealth);
   const rebalance = new StorageRebalanceService(poolsRepository, locationsRepository, chunkLocationsRepository);
   const manifests = new StorageManifestService();
 
   return {
     diskUsage,
+    diskHealth,
     validator,
     quotaGuard,
     allocator,

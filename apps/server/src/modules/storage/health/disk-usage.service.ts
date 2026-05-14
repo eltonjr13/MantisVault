@@ -2,11 +2,13 @@ import { constants } from "node:fs";
 import { access, mkdir, statfs, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { DiskHardwareHealth } from "../storage.types";
 
 export type DiskUsage = {
   totalBytes: number;
   availableBytes: number;
   usedBytes: number;
+  hardwareHealth?: DiskHardwareHealth;
   warning?: string;
 };
 

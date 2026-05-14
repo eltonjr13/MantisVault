@@ -105,6 +105,32 @@ export interface ConnectorSyncResult {
 export type StoragePoolMode = "single" | "pooled-capacity" | "mirrored" | "hybrid";
 export type StoragePoolStatus = "active" | "readonly" | "degraded" | "error" | "disabled";
 export type StorageLocationStatus = "online" | "offline" | "readonly" | "full" | "error";
+export type DiskHardwareHealthStatus = "healthy" | "warning" | "critical" | "unknown";
+
+export interface DiskHardwareHealth {
+  id: string;
+  label: string;
+  model?: string;
+  serialNumber?: string;
+  mediaType?: string;
+  busType?: string;
+  sizeBytes?: number;
+  status: DiskHardwareHealthStatus;
+  statusLabel: string;
+  operationalStatus: string[];
+  driveLetters: string[];
+  source: "windows-storage" | "win32-diskdrive";
+  checkedAt: string;
+  warning?: string;
+}
+
+export interface DiskHealthReport {
+  supported: boolean;
+  checkedAt: string;
+  source: "windows-storage" | "win32-diskdrive" | "unsupported";
+  disks: DiskHardwareHealth[];
+  warnings: string[];
+}
 
 export interface StoragePool {
   id: string;
@@ -440,10 +466,16 @@ export async function getStorageUsage(pairing: PairPayload, poolId: string): Pro
 
 export async function checkStorageHealth(pairing: PairPayload, poolId: string): Promise<{
   pool: StoragePool;
-  locations: Array<StorageLocation & { disk?: { totalBytes: number; availableBytes: number; usedBytes: number } }>;
+  locations: Array<StorageLocation & { disk?: { totalBytes: number; availableBytes: number; usedBytes: number; hardwareHealth?: DiskHardwareHealth } }>;
   alerts: StorageUsage["alerts"];
 }> {
   return requestJson(pairing, `/api/storage/pools/${poolId}/health`, {
+    method: "GET"
+  });
+}
+
+export async function checkDiskHealth(pairing: PairPayload): Promise<DiskHealthReport> {
+  return requestJson(pairing, "/api/storage/disks/health", {
     method: "GET"
   });
 }

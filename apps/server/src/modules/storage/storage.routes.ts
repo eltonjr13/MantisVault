@@ -20,7 +20,8 @@ export async function registerStorageRoutes(app: FastifyInstance, deps: {
       pooledCapacity: true,
       mirrored: true,
       hybrid: true,
-      rebalance: true
+      rebalance: true,
+      diskHealth: true
     }
   }));
 
@@ -127,6 +128,14 @@ export async function registerStorageRoutes(app: FastifyInstance, deps: {
   app.get("/api/storage/locations/detect", { preHandler: auth }, async (_request, reply) => {
     try {
       return { locations: await storage.locations.detectCandidates() };
+    } catch (error) {
+      return sendStorageError(reply, error);
+    }
+  });
+
+  app.get("/api/storage/disks/health", { preHandler: auth }, async (_request, reply) => {
+    try {
+      return storage.diskHealth.checkAll();
     } catch (error) {
       return sendStorageError(reply, error);
     }

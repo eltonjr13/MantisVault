@@ -18,6 +18,37 @@ export type StorageLocationStatus =
   | "full"
   | "error";
 
+export type DiskHardwareHealthStatus =
+  | "healthy"
+  | "warning"
+  | "critical"
+  | "unknown";
+
+export type DiskHardwareHealth = {
+  id: string;
+  label: string;
+  model?: string;
+  serialNumber?: string;
+  mediaType?: string;
+  busType?: string;
+  sizeBytes?: number;
+  status: DiskHardwareHealthStatus;
+  statusLabel: string;
+  operationalStatus: string[];
+  driveLetters: string[];
+  source: "windows-storage" | "win32-diskdrive";
+  checkedAt: string;
+  warning?: string;
+};
+
+export type DiskHealthReport = {
+  supported: boolean;
+  checkedAt: string;
+  source: "windows-storage" | "win32-diskdrive" | "unsupported";
+  disks: DiskHardwareHealth[];
+  warnings: string[];
+};
+
 export type StoragePool = {
   id: string;
   name: string;

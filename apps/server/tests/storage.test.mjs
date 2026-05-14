@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { createRequire } from "node:module";
 import test from "node:test";
 
@@ -13,6 +13,7 @@ const { VaultDatabase } = require("../dist/db/database.js");
 const { buildStorageManagerModule } = require("../dist/modules/storage/storage.service.js");
 const { registerStorageRoutes } = require("../dist/modules/storage/storage.routes.js");
 const { StorageError } = require("../dist/modules/storage/storage.errors.js");
+const { StorageHealthService } = require("../dist/modules/storage/health/storage-health.service.js");
 
 const GB = 1024 * 1024 * 1024;
 
@@ -163,6 +164,49 @@ test("health marca location offline e allocator nao seleciona offline", async ()
       }),
       /offline/
     );
+  });
+});
+
+test("health inclui diagnostico fisico do disco quando disponivel", async () => {
+  await withStorage(async ({ dir, storage }) => {
+    const rootPath = join(dir, "smart-warning");
+    const created = await storage.pools.create({
+      name: "SMART",
+      mode: "single",
+      quotaBytes: 2 * GB,
+      reservedFreeBytes: 0,
+      locations: [{ label: "A", rootPath, quotaBytes: 2 * GB, reservedFreeBytes: 0 }]
+    });
+    const driveLetter = parse(rootPath).root.slice(0, 2).toUpperCase();
+    const fakeDiskHealth = {
+      checkAll: async () => ({
+        supported: true,
+        checkedAt: new Date().toISOString(),
+        source: "windows-storage",
+        warnings: [],
+        disks: [{
+          id: "physical:test",
+          label: "Disco Teste",
+          model: "Disco Teste",
+          status: "warning",
+          statusLabel: "Warning",
+          operationalStatus: ["Predictive Failure"],
+          driveLetters: [driveLetter],
+          source: "windows-storage",
+          checkedAt: new Date().toISOString()
+        }]
+      })
+    };
+    const health = new StorageHealthService(
+      storage.repositories.pools,
+      storage.repositories.locations,
+      storage.diskUsage,
+      fakeDiskHealth
+    );
+    const result = await health.checkPool(created.pool.id);
+
+    assert.equal(result.locations[0].disk.hardwareHealth.status, "warning");
+    assert.equal(result.alerts.some((alert) => alert.code === "STORAGE_DISK_HARDWARE_WARNING"), true);
   });
 });
 
