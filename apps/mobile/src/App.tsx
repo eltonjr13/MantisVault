@@ -45,7 +45,9 @@ import {
   createStoragePool,
   deleteFile,
   disconnectConnector,
+  fetchPairQr,
   fetchPairPayload,
+  getPairStatus,
   getConnectorCapabilities,
   getConnectorItems,
   getStoragePool,
@@ -70,6 +72,7 @@ import {
   type ConnectorSyncResult,
   type ConnectorType,
   type CreateStoragePoolRequest,
+  type PairQrResponse,
   type RemoteVaultKeyring,
   type StoragePool,
   type StoragePoolMode,
@@ -555,121 +558,225 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
     return window.location.hostname ? `http://${window.location.hostname}:4577` : "http://";
   });
   const [qrText, setQrText] = useState("");
-  const [scannerActive, setScannerActive] = useState(false);
+  const [pairQr, setPairQr] = useState<PairQrResponse | undefined>();
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
+  const [qrLoading, setQrLoading] = useState(false);
+  const [notice, setNotice] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
-  const scannerRef = useRef<{ stop: () => Promise<void>; clear: () => void } | undefined>();
+  const nextRefreshAtRef = useRef(0);
+  const statusHandledRef = useRef(false);
 
-  async function stopScanner() {
-    if (scannerRef.current) {
-      await scannerRef.current.stop().catch(() => undefined);
-      scannerRef.current.clear();
-      scannerRef.current = undefined;
-    }
-
-    setScannerActive(false);
-  }
-
-  async function startScanner() {
+  async function loadPairQr(fresh = false, baseUrl = manualUrl) {
+    setQrLoading(true);
     setError(undefined);
-    setScannerActive(true);
+    setNotice(undefined);
 
     try {
-      const { Html5Qrcode } = await import("html5-qrcode");
-      const scanner = new Html5Qrcode("qr-reader");
-      scannerRef.current = scanner;
-      await scanner.start(
-        { facingMode: "environment" },
-        { fps: 8, qrbox: { width: 240, height: 240 } },
-        (decodedText) => {
-          void stopScanner();
-          try {
-            props.onPair(parsePairPayload(decodedText));
-          } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "QR Code invalido.");
-          }
-        },
-        undefined
-      );
+      const nextQr = await fetchPairQr(baseUrl, fresh);
+      statusHandledRef.current = false;
+      nextRefreshAtRef.current = Date.now() + nextQr.refreshSeconds * 1000;
+      setPairQr(nextQr);
+      setManualUrl(nextQr.payload.baseUrl);
+      setRemainingSeconds(nextQr.refreshSeconds);
     } catch (reason) {
-      setScannerActive(false);
-      setError(reason instanceof Error ? reason.message : "Camera indisponivel.");
+      setError(reason instanceof Error ? reason.message : "Servidor indisponivel.");
+    } finally {
+      setQrLoading(false);
     }
   }
 
   useEffect(() => {
+    if (props.pairing) {
+      return;
+    }
+
+    void loadPairQr(true);
+  }, [props.pairing]);
+
+  useEffect(() => {
+    if (props.pairing || !pairQr) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const nextRemaining = Math.max(0, Math.ceil((nextRefreshAtRef.current - Date.now()) / 1000));
+      setRemainingSeconds(nextRemaining);
+
+      if (nextRemaining === 0 && !qrLoading) {
+        void loadPairQr(true, pairQr.payload.baseUrl);
+      }
+    }, 1000);
+
     return () => {
-      void stopScanner();
+      window.clearInterval(interval);
     };
-  }, []);
+  }, [props.pairing, pairQr, qrLoading]);
+
+  useEffect(() => {
+    if (props.pairing || !pairQr) {
+      return;
+    }
+
+    const checkStatus = async () => {
+      try {
+        const status = await getPairStatus(pairQr.payload.baseUrl, pairQr.payload.token);
+
+        if (status.confirmed && !statusHandledRef.current) {
+          statusHandledRef.current = true;
+          setNotice("Dispositivo conectado.");
+          props.onPair(pairQr.payload);
+          return;
+        }
+
+        if (!status.active && !qrLoading) {
+          void loadPairQr(true, pairQr.payload.baseUrl);
+        }
+      } catch {
+        return;
+      }
+    };
+
+    void checkStatus();
+    const interval = window.setInterval(checkStatus, 2000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [props.pairing, props.onPair, pairQr, qrLoading]);
+
+  const refreshRatio = pairQr ? Math.max(0, Math.min(1, remainingSeconds / pairQr.refreshSeconds)) : 0;
+
+  if (props.pairing) {
+    return (
+      <section className="panel pair-connect-panel">
+        <div className="pair-mobile-title">
+          <Smartphone size={17} />
+          <span>Dispositivo Conectado</span>
+          <ShieldCheck size={17} />
+        </div>
+
+        <div className="pair-connected-state">
+          <CheckCircle2 size={24} />
+          <div>
+            <strong>Celular pareado</strong>
+            <span>O QR Code foi removido desta aba.</span>
+          </div>
+        </div>
+
+        <div className="server-card pair-server-card">
+          <span>{props.pairing.serverName}</span>
+          <strong>{props.pairing.baseUrl}</strong>
+          <code>{props.pairing.fingerprint}</code>
+          <small>Sessao ativa ate {formatDate(props.pairing.expiresAt)}</small>
+          <button className="ghost-button compact" type="button" onClick={props.onClear}>
+            Remover
+          </button>
+        </div>
+
+        {error && <p className="error-line">{error}</p>}
+      </section>
+    );
+  }
 
   return (
     <section className="panel pair-connect-panel">
       <div className="pair-mobile-title">
         <Smartphone size={17} />
-        <span>Conectar Dispositivo</span>
+        <span>Conectar Celular</span>
         <ShieldCheck size={17} />
       </div>
 
       <div className="pair-hero-copy">
-        <h2>Conecte ao seu dispositivo local</h2>
-        <p>Escaneie o QR Code exibido no PC</p>
+        <h2>Escaneie no celular</h2>
+        <p>Este QR Code e gerado pelo servidor local</p>
       </div>
 
-      {props.pairing && (
-        <div className="server-card pair-server-card">
-          <span>{props.pairing.serverName}</span>
-          <strong>{props.pairing.baseUrl}</strong>
-          <code>{props.pairing.fingerprint}</code>
-          <small>Expira em {formatDate(props.pairing.expiresAt)}</small>
-          <button className="ghost-button compact" type="button" onClick={props.onClear}>
-            Remover
-          </button>
+      <div className="pair-real-qr-frame">
+        {pairQr ? (
+          <img className="pair-real-qr" src={pairQr.qrDataUrl} alt="QR Code de pareamento KazVault" />
+        ) : (
+          <div className="pair-qr-loading" aria-live="polite">
+            <QrCode size={64} />
+            <span>{qrLoading ? "Gerando QR..." : "QR indisponivel"}</span>
+          </div>
+        )}
+      </div>
+
+      {pairQr && (
+        <div className="pair-qr-timer">
+          <div className="pair-qr-timer-row">
+            <strong>QR temporario</strong>
+            <span>{formatCountdown(remainingSeconds)}</span>
+          </div>
+          <div className="pair-qr-timer-bar">
+            <span style={{ transform: `scaleX(${refreshRatio})` }} />
+          </div>
         </div>
       )}
 
-      <div className={scannerActive ? "pair-scanner active" : "pair-scanner"}>
-        {!scannerActive && (
-          <div className="pair-qr-placeholder" aria-hidden="true">
-            <QrCode size={112} />
-          </div>
-        )}
-        <div id="qr-reader" className={scannerActive ? "qr-reader active" : "qr-reader"} />
-      </div>
+      {pairQr && (
+        <div className="server-card pair-server-card">
+          <span>{pairQr.payload.serverName}</span>
+          <strong>{pairQr.payload.baseUrl}</strong>
+          <code>{pairQr.payload.fingerprint}</code>
+          <small>Expira em {formatDate(pairQr.payload.expiresAt)}</small>
+        </div>
+      )}
 
       <div className="pair-scan-actions">
-        <button className="primary-button" type="button" onClick={() => void startScanner()} disabled={scannerActive}>
-          <QrCode size={18} />
-          Escanear QR
+        <button className="primary-button" type="button" onClick={() => void loadPairQr(true)} disabled={qrLoading}>
+          <RefreshCcw size={18} />
+          Atualizar QR
         </button>
-        <button className="ghost-button" type="button" onClick={() => void stopScanner()} disabled={!scannerActive}>
-          Parar camera
+        <button
+          className="ghost-button"
+          type="button"
+          disabled={!pairQr}
+          onClick={() => {
+            if (!pairQr) {
+              return;
+            }
+
+            void navigator.clipboard.writeText(pairQr.connectUrl).catch(() => setError("Nao foi possivel copiar o link."));
+          }}
+        >
+          <Copy size={18} />
+          Copiar link
         </button>
       </div>
 
-      <div className="pair-divider"><span />OU<span /></div>
-
-      <form
-        className="form-grid pair-manual-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setError(undefined);
-          void fetchPairPayload(manualUrl)
-            .then(props.onPair)
-            .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Servidor indisponivel."));
-        }}
-      >
-        <label>
-          Digitar URL manualmente
-          <input value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} inputMode="url" />
-        </label>
-        <button className="ghost-button" type="submit">
-          <Link2 size={18} />
-          Buscar pareamento
-        </button>
-      </form>
-
       <details className="advanced-pairing">
-        <summary>Opcao avancada: colar payload</summary>
+        <summary>Opcao manual</summary>
+        <form
+          className="form-grid pair-manual-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void loadPairQr(true, manualUrl);
+          }}
+        >
+          <label>
+            URL do servidor
+            <input value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} inputMode="url" />
+          </label>
+          <button className="ghost-button" type="submit" disabled={qrLoading}>
+            <QrCode size={18} />
+            Gerar QR
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={() => {
+              setError(undefined);
+              void fetchPairPayload(manualUrl)
+                .then(props.onPair)
+                .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Servidor indisponivel."));
+            }}
+          >
+            <Link2 size={18} />
+            Parear direto
+          </button>
+        </form>
+
         <form
           className="form-grid"
           onSubmit={(event) => {
@@ -692,10 +799,7 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
         </form>
       </details>
 
-      <div className="pair-status-strip">
-        <span>192.168.1.42</span>
-        <strong><ShieldCheck size={15} /> Segura</strong>
-      </div>
+      {notice && <p className="notice-line">{notice}</p>}
 
       {error && <p className="error-line">{error}</p>}
     </section>
@@ -2221,6 +2325,13 @@ function formatDate(value: string): string {
     dateStyle: "short",
     timeStyle: "short"
   }).format(new Date(value));
+}
+
+function formatCountdown(value: number): string {
+  const seconds = Math.max(0, Math.ceil(value));
+  const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const rest = String(seconds % 60).padStart(2, "0");
+  return `${minutes}:${rest}`;
 }
 
 function keyringMatchesRemote(local: ReturnType<typeof getStoredKeyring>, remote: RemoteVaultKeyring): boolean {

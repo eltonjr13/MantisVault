@@ -26,6 +26,23 @@ export interface RemoteVaultKeyring {
   createdAt: string;
 }
 
+export interface PairQrResponse {
+  payload: PairPayload;
+  connectUrl: string;
+  mobileUrl: string;
+  refreshSeconds: number;
+  qrText: string;
+  qrDataUrl: string;
+}
+
+export interface PairStatus {
+  active: boolean;
+  confirmed: boolean;
+  confirmedAt?: string;
+  confirmedBy?: string;
+  expiresAt?: string;
+}
+
 export type ConnectorType =
   | "local-files"
   | "android-files"
@@ -182,9 +199,26 @@ export interface CreateStoragePoolRequest {
 }
 
 export async function fetchPairPayload(baseUrl: string): Promise<PairPayload> {
-  const response = await fetch(`${trimSlash(baseUrl)}/api/pair/qr`);
-  const body = (await parseResponse(response)) as { payload: PairPayload };
-  return body.payload;
+  return (await fetchPairQr(baseUrl)).payload;
+}
+
+export async function fetchPairQr(baseUrl: string, fresh = false): Promise<PairQrResponse> {
+  const url = new URL(`${trimSlash(baseUrl)}/api/pair/qr`);
+
+  if (fresh) {
+    url.searchParams.set("fresh", "1");
+  }
+
+  const response = await fetch(url.toString(), { cache: "no-store" });
+  return (await parseResponse(response)) as PairQrResponse;
+}
+
+export async function getPairStatus(baseUrl: string, token: string): Promise<PairStatus> {
+  const url = new URL(`${trimSlash(baseUrl)}/api/pair/status`);
+  url.searchParams.set("token", token);
+
+  const response = await fetch(url.toString(), { cache: "no-store" });
+  return (await parseResponse(response)) as PairStatus;
 }
 
 export async function confirmPairing(pairing: PairPayload): Promise<PairPayload> {
