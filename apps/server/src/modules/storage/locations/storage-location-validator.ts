@@ -46,7 +46,7 @@ export class StorageLocationValidator {
     }
 
     await mkdir(normalizedPath, { recursive: true });
-    const tempPath = resolve(normalizedPath, `.mantisvault-validator-${randomUUID()}.tmp`);
+    const tempPath = resolve(normalizedPath, `.kazvault-validator-${randomUUID()}.tmp`);
     if (!isInside(normalizedPath, tempPath)) {
       throw new StorageError("STORAGE_INVALID_PATH");
     }
@@ -67,7 +67,7 @@ export class StorageLocationValidator {
     }
 
     if (!existsSync(normalizedPath)) {
-      warnings.push("A pasta foi criada automaticamente pelo MantisVault.");
+      warnings.push("A pasta foi criada automaticamente pelo KazVault.");
     }
 
     return {

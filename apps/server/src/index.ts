@@ -35,7 +35,7 @@ async function main(): Promise<void> {
   const storageManager = buildStorageManagerModule(db);
   const authSessionService = new AuthSessionService(db, `${storage.metaDir}/auth-secret`);
   await storageManager.pools.ensureDefaultPool({
-    name: "MantisVault Vault",
+    name: "KazVault Vault",
     rootPath: storage.storageDir,
     quotaBytes: config.spaceLimitBytes,
     reservedFreeBytes: 20 * 1024 * 1024 * 1024

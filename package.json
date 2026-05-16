@@ -7,8 +7,6 @@
   "scripts": {
     "dev:server": "corepack pnpm --filter @kazvault/server dev",
     "dev:mobile": "corepack pnpm --filter @kazvault/mobile dev --host 0.0.0.0",
-    "dev:mantisvault": "corepack pnpm --filter @kazvault/mantisvault dev",
-    "build:mantisvault": "corepack pnpm --filter @kazvault/mantisvault build",
     "build": "corepack pnpm -r build",
     "typecheck": "corepack pnpm --filter @kazvault/shared build && corepack pnpm --filter @kazvault/crypto build && corepack pnpm --filter @kazvault/compression build && corepack pnpm -r typecheck",
     "android": "corepack pnpm --filter @kazvault/mobile android"

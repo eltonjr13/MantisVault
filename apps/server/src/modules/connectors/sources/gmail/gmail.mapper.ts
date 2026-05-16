@@ -2,8 +2,14 @@ export function decodeGmailAttachmentData(value: string): Buffer {
   return Buffer.from(value.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 }
 
-export function collectGmailAttachmentParts(payload: any): Array<{ partId: string; filename: string; mimeType?: string; attachmentId: string }> {
-  const out: Array<{ partId: string; filename: string; mimeType?: string; attachmentId: string }> = [];
+export function collectGmailAttachmentParts(payload: any): Array<{
+  partId: string;
+  filename: string;
+  mimeType?: string;
+  attachmentId: string;
+  sizeBytes: number;
+}> {
+  const out: Array<{ partId: string; filename: string; mimeType?: string; attachmentId: string; sizeBytes: number }> = [];
   const stack = [...(payload?.parts ?? [])];
 
   while (stack.length > 0) {
@@ -14,7 +20,8 @@ export function collectGmailAttachmentParts(payload: any): Array<{ partId: strin
         partId: String(part.partId ?? part.filename),
         filename: String(part.filename),
         mimeType: part.mimeType,
-        attachmentId: String(part.body.attachmentId)
+        attachmentId: String(part.body.attachmentId),
+        sizeBytes: Number(part.body.size ?? 0)
       });
     }
 

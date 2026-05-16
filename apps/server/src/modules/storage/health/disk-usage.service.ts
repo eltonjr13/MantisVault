@@ -46,7 +46,7 @@ export class DiskUsageService {
     try {
       await mkdir(rootPath, { recursive: true });
       await access(rootPath, constants.W_OK);
-      const probePath = join(rootPath, `.mantisvault-write-test-${randomUUID()}.tmp`);
+      const probePath = join(rootPath, `.kazvault-write-test-${randomUUID()}.tmp`);
       await writeFile(probePath, "ok");
       await rm(probePath, { force: true });
       return true;

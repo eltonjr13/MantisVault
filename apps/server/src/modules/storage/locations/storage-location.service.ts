@@ -26,7 +26,7 @@ export class StorageLocationService {
         await readdir(root);
         candidates.push({
           label: `Disco ${letter}`,
-          rootPath: join(root, "MantisVaultPool"),
+          rootPath: join(root, "KazVaultPool"),
           isSystemDrive: root.toLowerCase() === systemRoot
         });
       } catch {

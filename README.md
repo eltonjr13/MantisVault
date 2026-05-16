@@ -97,6 +97,16 @@ O QR Code da tela `/pair` e temporario, atualiza automaticamente a cada 2 minuto
 - `GET /api/files/:fileId/manifest`
 - `GET /api/files/:fileId/chunks/:index`
 - `DELETE /api/files/:fileId`
+- `GET /api/connectors`
+- `GET /api/connectors/capabilities`
+- `POST /api/connectors/:id/sync`
+- `GET /api/connectors/:id/items`
+- `POST /api/connectors/:id/email-vault/plan`
+- `POST /api/connectors/:id/email-vault/archive`
+- `POST /api/connectors/:id/email-vault/cleanup`
+- `GET /api/storage/pools`
+- `POST /api/storage/pools`
+- `GET /api/storage/pools/:id/usage`
 
 ## Seguranca
 
@@ -108,7 +118,7 @@ O QR Code da tela `/pair` e temporario, atualiza automaticamente a cada 2 minuto
 - A chave mestra local e gerada no app e fica envelopada pela chave local do dispositivo e pela chave de recuperacao.
 - Se a chave de recuperacao for perdida, os arquivos nao poderao ser restaurados em outro dispositivo.
 
-## MantisVault Lossless Engine
+## KazVault Lossless Engine
 
 O modo padrao e `lossless-safe`: otimiza/comprime antes de criptografar, nunca usa compressao com perda e descarta o resultado se a economia ficar abaixo de `MIN_OPTIMIZATION_GAIN_PERCENT` (padrao: `2`).
 
@@ -142,3 +152,17 @@ ffmpeg -version
 ```
 
 Se alguma ferramenta nao existir, o sistema preserva o original e continua funcionando. O endpoint `GET /api/vault/optimizers` mostra quais binarios foram encontrados.
+
+## Email Vault
+
+O Email Vault ajuda a liberar espaco de caixas de email sem apagar nada antes de validar o backup local.
+
+Fluxo seguro:
+
+1. Simular limpeza com filtros de idade, tamanho e busca do provedor.
+2. Revisar candidatos e prioridade sugerida.
+3. Arquivar email bruto `.eml` e anexos no KazVault.
+4. Validar que o item foi salvo no cofre local.
+5. Somente depois mover mensagens arquivadas para a lixeira.
+
+No MVP, o fluxo real esta implementado para Gmail. O Gmail nao permite remover somente anexos mantendo a mensagem original; para liberar espaco, o KazVault arquiva o email completo e depois move a mensagem original para a lixeira mediante confirmacao. Outlook e IMAP continuam conectores preparados, mas a limpeza fina fica para evolucao dos respectivos providers.

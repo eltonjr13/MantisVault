@@ -11,7 +11,13 @@ import { ConnectorRegistry } from "./connectors.registry";
 import { ConnectorsRepository } from "./connectors.repository";
 import { ConnectorsService } from "./connectors.service";
 import { sendConnectorError } from "./connectors.controller";
-import type { ConnectorType, SyncResult } from "./connectors.types";
+import type {
+  ConnectorType,
+  EmailVaultArchiveRequest,
+  EmailVaultCleanupRequest,
+  EmailVaultPlanOptions,
+  SyncResult
+} from "./connectors.types";
 import { ConnectorKeyManager, TokenVaultService } from "./credentials/token-vault.service";
 import { ConnectorCredentialsService } from "./credentials/connector-credentials.service";
 import { VaultIngestService } from "../vault/ingest/vault-ingest.service";
@@ -110,6 +116,42 @@ export async function registerConnectorsRoutes(app: FastifyInstance, deps: Conne
       return sendConnectorError(reply, error);
     }
   });
+
+  app.post<{ Params: { id: string }; Body: EmailVaultPlanOptions }>(
+    "/api/connectors/:id/email-vault/plan",
+    { preHandler: auth },
+    async (request, reply) => {
+      try {
+        return service.planEmailVault(request.params.id, request.body ?? {});
+      } catch (error) {
+        return sendConnectorError(reply, error);
+      }
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: EmailVaultArchiveRequest }>(
+    "/api/connectors/:id/email-vault/archive",
+    { preHandler: auth },
+    async (request, reply) => {
+      try {
+        return service.archiveEmailVault(request.params.id, request.body ?? { messageIds: [] });
+      } catch (error) {
+        return sendConnectorError(reply, error);
+      }
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: EmailVaultCleanupRequest }>(
+    "/api/connectors/:id/email-vault/cleanup",
+    { preHandler: auth },
+    async (request, reply) => {
+      try {
+        return service.cleanupEmailVault(request.params.id, request.body ?? ({} as EmailVaultCleanupRequest));
+      } catch (error) {
+        return sendConnectorError(reply, error);
+      }
+    }
+  );
 
   app.post<{ Params: { id: string }; Body: { deleteData?: boolean } }>("/api/connectors/:id/disconnect", { preHandler: auth }, async (request, reply) => {
     try {

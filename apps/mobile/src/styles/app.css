@@ -1169,24 +1169,119 @@ textarea:focus {
 .storage-badge.degraded,
 .storage-badge.full,
 .storage-badge.readonly,
-.storage-badge.revoked {
+.storage-badge.revoked,
+.storage-badge.medium {
   border-color: rgba(245, 165, 36, 0.28);
   color: var(--warning);
   background: rgba(245, 165, 36, 0.1);
 }
 
 .storage-badge.error,
-.storage-badge.offline {
+.storage-badge.offline,
+.storage-badge.high {
   border-color: rgba(255, 77, 77, 0.28);
   color: #ff938c;
   background: rgba(255, 77, 77, 0.1);
 }
 
 .storage-badge.disconnected,
-.storage-badge.connecting {
+.storage-badge.connecting,
+.storage-badge.low {
   border-color: var(--border);
   color: var(--muted);
   background: rgba(255, 255, 255, 0.035);
+}
+
+.email-vault-panel {
+  display: grid;
+  gap: 14px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(25, 198, 179, 0.06), transparent 48%),
+    rgba(255, 255, 255, 0.025);
+}
+
+.email-vault-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.6fr) repeat(3, minmax(92px, 0.7fr));
+  gap: 10px;
+}
+
+.email-query-field {
+  display: grid;
+  gap: 7px;
+}
+
+.email-vault-results,
+.email-candidate-list {
+  display: grid;
+  gap: 10px;
+}
+
+.email-vault-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.email-vault-summary div {
+  display: grid;
+  gap: 4px;
+  min-height: 86px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(3, 8, 10, 0.45);
+}
+
+.email-vault-summary strong {
+  color: var(--text);
+  font-size: 1.15rem;
+}
+
+.email-candidate-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.email-candidate-row input {
+  width: 18px;
+  height: 18px;
+  margin-top: 4px;
+  accent-color: var(--teal-neon);
+}
+
+.email-candidate-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.email-candidate-main strong,
+.email-candidate-main span,
+.email-candidate-main small {
+  overflow-wrap: anywhere;
+}
+
+.email-candidate-main small,
+.email-candidate-size span {
+  color: var(--muted);
+}
+
+.email-candidate-size {
+  display: grid;
+  gap: 3px;
+  justify-items: end;
+  min-width: 110px;
+  text-align: right;
 }
 
 .rebalance-plan {
@@ -1287,6 +1382,8 @@ textarea:focus {
   .connectors-grid,
   .location-list,
   .mode-grid,
+  .email-vault-controls,
+  .email-vault-summary,
   .storage-builder,
   .storage-form {
     grid-template-columns: 1fr;
@@ -1302,11 +1399,29 @@ textarea:focus {
 
   .pair-status-strip,
   .storage-overview,
+  .email-candidate-row,
   .connector-item-row,
   .queue-item > div:first-child,
   .file-row {
     align-items: flex-start;
+  }
+
+  .pair-status-strip,
+  .storage-overview,
+  .connector-item-row,
+  .queue-item > div:first-child,
+  .file-row {
     flex-direction: column;
+  }
+
+  .email-candidate-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .email-candidate-size {
+    grid-column: 2;
+    justify-items: start;
+    text-align: left;
   }
 
   .file-actions {

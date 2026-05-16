@@ -54,6 +54,8 @@ import {
   getStorageUsage,
   getRemoteVaultKeyring,
   getVaultStats,
+  archiveEmailVault,
+  cleanupEmailVault,
   importCalendarIcs,
   importCalendarJson,
   importContactsJson,
@@ -61,6 +63,7 @@ import {
   listConnectors,
   listStoragePools,
   planStorageRebalance,
+  planEmailVault,
   listFiles,
   saveRemoteVaultKeyring,
   startConnectorSync,
@@ -72,6 +75,8 @@ import {
   type ConnectorSyncResult,
   type ConnectorType,
   type CreateStoragePoolRequest,
+  type EmailVaultCandidate,
+  type EmailVaultPlan,
   type PairQrResponse,
   type RemoteVaultKeyring,
   type StoragePool,
@@ -847,6 +852,15 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
   }
 ]`
   });
+  const [emailVaultForm, setEmailVaultForm] = useState({
+    query: "",
+    olderThanDays: 180,
+    minSizeMb: 5,
+    limit: 25
+  });
+  const [emailVaultPlan, setEmailVaultPlan] = useState<EmailVaultPlan | undefined>();
+  const [selectedEmailConnectorId, setSelectedEmailConnectorId] = useState<string | undefined>();
+  const [selectedEmailIds, setSelectedEmailIds] = useState<string[]>([]);
 
   const connectorsByType = useMemo(() => {
     const map = new Map<ConnectorType, ConnectorRecord>();
@@ -860,12 +874,30 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
     return map;
   }, [connectors]);
 
+  const emailConnectors = useMemo(
+    () => connectors.filter((connector) => connector.type === "gmail" || connector.type === "outlook" || connector.type === "imap"),
+    [connectors]
+  );
+  const selectedEmailConnector = useMemo(
+    () => emailConnectors.find((connector) => connector.id === selectedEmailConnectorId) ?? emailConnectors[0],
+    [emailConnectors, selectedEmailConnectorId]
+  );
+
+  useEffect(() => {
+    if (!selectedEmailConnectorId && emailConnectors[0]) {
+      setSelectedEmailConnectorId(emailConnectors[0].id);
+    }
+  }, [emailConnectors, selectedEmailConnectorId]);
+
   async function refresh(nextConnectorId?: string) {
     if (!props.pairing) {
       setConnectors([]);
       setCapabilities([]);
       setItems({});
       setSelectedConnectorId(undefined);
+      setSelectedEmailConnectorId(undefined);
+      setEmailVaultPlan(undefined);
+      setSelectedEmailIds([]);
       return;
     }
 
@@ -1028,6 +1060,87 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
       setNotice(renderSyncNotice(result));
       await refresh(result.connectorId);
     });
+  }
+
+  async function handleEmailVaultPlan(includeAlreadyArchived = false) {
+    if (!props.pairing || !selectedEmailConnector) {
+      return;
+    }
+
+    await runBusy("email-vault-plan", async () => {
+      const plan = await planEmailVault(props.pairing!, selectedEmailConnector.id, {
+        query: emailVaultForm.query.trim() || undefined,
+        olderThanDays: emailVaultForm.olderThanDays,
+        minSizeBytes: emailVaultForm.minSizeMb * 1024 * 1024,
+        limit: emailVaultForm.limit,
+        includeAlreadyArchived
+      });
+      setEmailVaultPlan(plan);
+      setSelectedEmailIds(
+        plan.candidates
+          .filter((candidate) => !candidate.archived && candidate.importance !== "low")
+          .map((candidate) => candidate.messageId)
+      );
+      setNotice(`Plano pronto: ${plan.candidates.length} candidatos, ate ${formatBytes(plan.estimatedFreeableBytes)} liberaveis.`);
+    });
+  }
+
+  async function handleEmailVaultArchive() {
+    if (!props.pairing || !selectedEmailConnector || selectedEmailIds.length === 0) {
+      return;
+    }
+
+    await runBusy("email-vault-archive", async () => {
+      const result = await archiveEmailVault(props.pairing!, selectedEmailConnector.id, {
+        messageIds: selectedEmailIds,
+        includeAttachments: true,
+        includeRawEmail: true
+      });
+      setNotice(`Arquivamento: ${result.archived} itens, ${result.skipped} ja existentes, ${result.failed} falhas.`);
+      const plan = await planEmailVault(props.pairing!, selectedEmailConnector.id, {
+        query: emailVaultForm.query.trim() || undefined,
+        olderThanDays: emailVaultForm.olderThanDays,
+        minSizeBytes: emailVaultForm.minSizeMb * 1024 * 1024,
+        limit: emailVaultForm.limit,
+        includeAlreadyArchived: true
+      });
+      setEmailVaultPlan(plan);
+    });
+  }
+
+  async function handleEmailVaultCleanup() {
+    if (!props.pairing || !selectedEmailConnector || selectedEmailIds.length === 0) {
+      return;
+    }
+
+    if (!window.confirm("Mover os emails selecionados para a lixeira somente depois de arquivados no KazVault?")) {
+      return;
+    }
+
+    await runBusy("email-vault-cleanup", async () => {
+      const result = await cleanupEmailVault(props.pairing!, selectedEmailConnector.id, {
+        messageIds: selectedEmailIds,
+        action: "move-to-trash",
+        confirmation: "ARCHIVE_VERIFIED"
+      });
+      setNotice(`Limpeza: ${result.cleaned} movidos para lixeira, ${result.skipped} ignorados, ${result.failed} falhas.`);
+      const plan = await planEmailVault(props.pairing!, selectedEmailConnector.id, {
+        query: emailVaultForm.query.trim() || undefined,
+        olderThanDays: emailVaultForm.olderThanDays,
+        minSizeBytes: emailVaultForm.minSizeMb * 1024 * 1024,
+        limit: emailVaultForm.limit,
+        includeAlreadyArchived: true
+      });
+      setEmailVaultPlan(plan);
+    });
+  }
+
+  function toggleEmailCandidate(candidate: EmailVaultCandidate) {
+    setSelectedEmailIds((current) => (
+      current.includes(candidate.messageId)
+        ? current.filter((messageId) => messageId !== candidate.messageId)
+        : [...current, candidate.messageId]
+    ));
   }
 
   return (
@@ -1273,6 +1386,161 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
               );
             })}
           </div>
+
+          <section className="email-vault-panel">
+            <div className="panel-heading">
+              <Mail size={20} />
+              <div>
+                <h2>Email Vault</h2>
+                <p>Arquive emails/anexos pesados no disco antes de liberar espaco na caixa.</p>
+              </div>
+            </div>
+
+            {emailConnectors.length === 0 && (
+              <p className="notice-line">Conecte Gmail, Outlook ou IMAP para planejar limpeza da caixa.</p>
+            )}
+
+            {emailConnectors.length > 0 && (
+              <>
+                <div className="email-vault-controls">
+                  <label>
+                    Conta
+                    <select
+                      value={selectedEmailConnector?.id ?? ""}
+                      onChange={(event) => {
+                        setSelectedEmailConnectorId(event.target.value);
+                        setEmailVaultPlan(undefined);
+                        setSelectedEmailIds([]);
+                      }}
+                    >
+                      {emailConnectors.map((connector) => (
+                        <option value={connector.id} key={connector.id}>
+                          {connector.name} - {connector.accountIdentifier ?? connector.type}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Mais antigos que
+                    <input
+                      type="number"
+                      min={1}
+                      value={emailVaultForm.olderThanDays}
+                      onChange={(event) => setEmailVaultForm((current) => ({ ...current, olderThanDays: Number(event.target.value) }))}
+                    />
+                  </label>
+                  <label>
+                    Tamanho minimo MB
+                    <input
+                      type="number"
+                      min={1}
+                      value={emailVaultForm.minSizeMb}
+                      onChange={(event) => setEmailVaultForm((current) => ({ ...current, minSizeMb: Number(event.target.value) }))}
+                    />
+                  </label>
+                  <label>
+                    Limite
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={emailVaultForm.limit}
+                      onChange={(event) => setEmailVaultForm((current) => ({ ...current, limit: Number(event.target.value) }))}
+                    />
+                  </label>
+                </div>
+
+                <label className="email-query-field">
+                  Busca opcional do provedor
+                  <input
+                    placeholder="Ex.: has:attachment larger:10M older_than:365d"
+                    value={emailVaultForm.query}
+                    onChange={(event) => setEmailVaultForm((current) => ({ ...current, query: event.target.value }))}
+                  />
+                </label>
+
+                <div className="inline-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={!selectedEmailConnector || busyKey === "email-vault-plan"}
+                    onClick={() => void handleEmailVaultPlan()}
+                  >
+                    <RefreshCcw size={18} />
+                    Simular limpeza
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    disabled={!emailVaultPlan || selectedEmailIds.length === 0 || busyKey === "email-vault-archive"}
+                    onClick={() => void handleEmailVaultArchive()}
+                  >
+                    <Database size={18} />
+                    Arquivar selecionados
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    disabled={!emailVaultPlan || selectedEmailIds.length === 0 || busyKey === "email-vault-cleanup"}
+                    onClick={() => void handleEmailVaultCleanup()}
+                  >
+                    <Trash2 size={18} />
+                    Mover arquivados para lixeira
+                  </button>
+                </div>
+
+                {emailVaultPlan && (
+                  <div className="email-vault-results">
+                    <div className="email-vault-summary">
+                      <div>
+                        <span>Candidatos</span>
+                        <strong>{emailVaultPlan.candidates.length}</strong>
+                      </div>
+                      <div>
+                        <span>Espaco estimado</span>
+                        <strong>{formatBytes(emailVaultPlan.estimatedFreeableBytes)}</strong>
+                      </div>
+                      <div>
+                        <span>Selecionados</span>
+                        <strong>{selectedEmailIds.length}</strong>
+                      </div>
+                    </div>
+
+                    {emailVaultPlan.warnings.map((warning) => (
+                      <p className="notice-line" key={warning}>{warning}</p>
+                    ))}
+
+                    <div className="email-candidate-list">
+                      {emailVaultPlan.candidates.length === 0 && <p className="notice-line">Nenhum candidato encontrado para essa busca.</p>}
+                      {emailVaultPlan.candidates.map((candidate) => (
+                        <label className="email-candidate-row" key={candidate.messageId}>
+                          <input
+                            type="checkbox"
+                            checked={selectedEmailIds.includes(candidate.messageId)}
+                            onChange={() => toggleEmailCandidate(candidate)}
+                          />
+                          <div className="email-candidate-main">
+                            <strong>{candidate.subject}</strong>
+                            <span>{candidate.from ?? "Remetente mascarado"} - {candidate.date ? formatDate(candidate.date) : "Sem data"}</span>
+                            <small>{candidate.reasons.join(" ")}</small>
+                            <div className="source-badge-row">
+                              <span className={`storage-badge ${candidate.importance}`}>{emailImportanceLabel(candidate.importance)}</span>
+                              {candidate.archived && <span className="storage-badge active">Arquivado</span>}
+                              <span className="storage-badge disconnected">{candidate.attachments.length} anexos</span>
+                            </div>
+                          </div>
+                          <div className="email-candidate-size">
+                            <strong>{formatBytes(candidate.sizeBytes)}</strong>
+                            <span>{formatBytes(candidate.attachmentBytes)} em anexos</span>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
 
           <section className="connector-items-panel">
             <div className="panel-heading">
@@ -1776,15 +2044,15 @@ function StoragePanel(props: { pairing?: PairPayload }) {
   const [notice, setNotice] = useState<string | undefined>();
   const [plan, setPlan] = useState<string | undefined>();
   const [form, setForm] = useState({
-    name: "MantisVault Vault",
+    name: "KazVault Vault",
     mode: "single" as StoragePoolMode,
-    rootPath: "D:/MantisVaultPool",
+    rootPath: "D:/KazVaultPool",
     quotaGb: 100,
     reservedGb: 20
   });
   const [locationForm, setLocationForm] = useState({
     label: "Novo Disco",
-    rootPath: "E:/MantisVaultPool",
+    rootPath: "E:/KazVaultPool",
     quotaGb: 100,
     reservedGb: 20
   });
@@ -1915,7 +2183,7 @@ function StoragePanel(props: { pairing?: PairPayload }) {
           <>
             <div className="storage-overview">
               <div>
-                <span>MantisVault Vault</span>
+                <span>KazVault Vault</span>
                 <strong>{formatBytes(usage.usefulCapacityBytes)} disponiveis</strong>
                 <small>{modeTitle(selectedPool.mode)} - {selectedPool.status}</small>
               </div>
@@ -2150,6 +2418,16 @@ function ConnectorStatusBadge(props: { status: ConnectorRecord["status"] }) {
   };
 
   return <span className={`storage-badge ${props.status}`}>{labels[props.status]}</span>;
+}
+
+function emailImportanceLabel(value: "high" | "medium" | "low"): string {
+  const labels = {
+    high: "Importante",
+    medium: "Revisar",
+    low: "Baixa prioridade"
+  };
+
+  return labels[value];
 }
 
 function connectorLabel(type: ConnectorType): string {

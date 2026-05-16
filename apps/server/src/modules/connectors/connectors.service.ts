@@ -5,6 +5,9 @@ import type {
   ConnectorCapability,
   ConnectorRecord,
   ConnectorType,
+  EmailVaultArchiveRequest,
+  EmailVaultCleanupRequest,
+  EmailVaultPlanOptions,
   SyncOptions,
   SyncResult
 } from "./connectors.types";
@@ -95,6 +98,39 @@ export class ConnectorsService {
     }
   }
 
+  async planEmailVault(id: string, options: EmailVaultPlanOptions = {}) {
+    const connector = this.requireConnector(id);
+    const runtime = this.registry.get(connector.type);
+
+    if (!runtime.planEmailVault) {
+      throw new ConnectorError("EMAIL_VAULT_NOT_SUPPORTED", "Esta fonte ainda nao suporta Email Vault.", 400);
+    }
+
+    return runtime.planEmailVault(connector, options);
+  }
+
+  async archiveEmailVault(id: string, request: EmailVaultArchiveRequest) {
+    const connector = this.requireConnector(id);
+    const runtime = this.registry.get(connector.type);
+
+    if (!runtime.archiveEmailVault) {
+      throw new ConnectorError("EMAIL_VAULT_NOT_SUPPORTED", "Esta fonte ainda nao suporta arquivamento de email.", 400);
+    }
+
+    return runtime.archiveEmailVault(connector, request);
+  }
+
+  async cleanupEmailVault(id: string, request: EmailVaultCleanupRequest) {
+    const connector = this.requireConnector(id);
+    const runtime = this.registry.get(connector.type);
+
+    if (!runtime.cleanupEmailVault) {
+      throw new ConnectorError("EMAIL_VAULT_NOT_SUPPORTED", "Esta fonte ainda nao suporta limpeza de email.", 400);
+    }
+
+    return runtime.cleanupEmailVault(connector, request);
+  }
+
   async disconnect(id: string, deleteData = false): Promise<{ disconnected: true; deleteData: boolean }> {
     const connector = this.requireConnector(id);
     await this.registry.get(connector.type).disconnect(id);
@@ -173,6 +209,6 @@ function capability(
     localFirst: true,
     encryptedCredentials: true,
     env,
-    notes: ["Use apenas fontes e arquivos autorizados.", "Nenhum dado e enviado para nuvem pelo MantisVault."]
+    notes: ["Use apenas fontes e arquivos autorizados.", "Nenhum dado e enviado para nuvem pelo KazVault."]
   };
 }

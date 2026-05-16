@@ -119,6 +119,76 @@ export interface ConnectorSyncResult {
   errors: string[];
 }
 
+export type EmailVaultImportance = "high" | "medium" | "low";
+export type EmailVaultCleanupAction = "move-to-trash" | "delete-permanently" | "remove-attachments";
+
+export interface EmailVaultAttachmentCandidate {
+  id: string;
+  fileName: string;
+  mimeType?: string;
+  sizeBytes: number;
+  important: boolean;
+  reasons: string[];
+}
+
+export interface EmailVaultCandidate {
+  id: string;
+  connectorId: string;
+  provider: "gmail" | "outlook" | "imap";
+  messageId: string;
+  subject: string;
+  from?: string;
+  date?: string;
+  sizeBytes: number;
+  attachmentBytes: number;
+  attachments: EmailVaultAttachmentCandidate[];
+  importance: EmailVaultImportance;
+  reasons: string[];
+  cleanupActions: EmailVaultCleanupAction[];
+  archived: boolean;
+  archivedItemId?: string;
+  labels?: string[];
+}
+
+export interface EmailVaultPlan {
+  connectorId: string;
+  provider: "gmail" | "outlook" | "imap";
+  query: string;
+  scanned: number;
+  candidates: EmailVaultCandidate[];
+  totalBytes: number;
+  estimatedFreeableBytes: number;
+  warnings: string[];
+}
+
+export interface EmailVaultArchiveResult {
+  connectorId: string;
+  archived: number;
+  skipped: number;
+  failed: number;
+  bytesArchived: number;
+  items: Array<{
+    messageId: string;
+    itemId: string;
+    storedFileId?: string;
+    type: "email" | "attachment";
+    title: string;
+    sizeBytes?: number;
+  }>;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface EmailVaultCleanupResult {
+  connectorId: string;
+  action: EmailVaultCleanupAction;
+  cleaned: number;
+  skipped: number;
+  failed: number;
+  warnings: string[];
+  errors: string[];
+}
+
 export type StoragePoolMode = "single" | "pooled-capacity" | "mirrored" | "hybrid";
 export type StoragePoolStatus = "active" | "readonly" | "degraded" | "error" | "disabled";
 export type StorageLocationStatus = "online" | "offline" | "readonly" | "full" | "error";
@@ -385,6 +455,41 @@ export async function startConnectorSync(pairing: PairPayload, connectorId: stri
   dryRun?: boolean;
 } = {}): Promise<ConnectorSyncResult> {
   return requestJson<ConnectorSyncResult>(pairing, `/api/connectors/${connectorId}/sync`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+export async function planEmailVault(pairing: PairPayload, connectorId: string, body: {
+  query?: string;
+  olderThanDays?: number;
+  minSizeBytes?: number;
+  limit?: number;
+  includeAlreadyArchived?: boolean;
+} = {}): Promise<EmailVaultPlan> {
+  return requestJson(pairing, `/api/connectors/${connectorId}/email-vault/plan`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+export async function archiveEmailVault(pairing: PairPayload, connectorId: string, body: {
+  messageIds: string[];
+  includeAttachments?: boolean;
+  includeRawEmail?: boolean;
+}): Promise<EmailVaultArchiveResult> {
+  return requestJson(pairing, `/api/connectors/${connectorId}/email-vault/archive`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+export async function cleanupEmailVault(pairing: PairPayload, connectorId: string, body: {
+  messageIds: string[];
+  action: EmailVaultCleanupAction;
+  confirmation: "ARCHIVE_VERIFIED";
+}): Promise<EmailVaultCleanupResult> {
+  return requestJson(pairing, `/api/connectors/${connectorId}/email-vault/cleanup`, {
     method: "POST",
     body: JSON.stringify(body)
   });
