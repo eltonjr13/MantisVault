@@ -8,7 +8,9 @@ import {
   Copy,
   Database,
   Download,
+  Eye,
   FileUp,
+  Film,
   FolderInput,
   HardDrive,
   KeyRound,
@@ -25,7 +27,8 @@ import {
   Trash2,
   UploadCloud,
   Users,
-  Vault
+  Vault,
+  X
 } from "lucide-react";
 import type { CompressionAlgorithm, PairPayload, UploadStatus, VaultFileRecord, VaultStats } from "@kazvault/shared";
 import {
@@ -123,6 +126,27 @@ interface QueueItem {
   fileId?: string;
   error?: string;
 }
+
+interface ImagePreviewState {
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  mediaKind: "image" | "video";
+  objectUrl?: string;
+  progress: number;
+  detail: string;
+}
+
+interface MediaCardPreviewState {
+  status: "loading" | "ready" | "failed";
+  mediaKind: "image" | "video";
+  fileName: string;
+  mimeType: string;
+  detail?: string;
+  objectUrl?: string;
+}
+
+type VaultView = "files" | "media";
 
 export function App() {
   const [activeTab, setActiveTab] = useState<Tab>(() => {
@@ -1815,14 +1839,175 @@ function UploadPanel(props: {
 }
 
 function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
+  const [vaultView, setVaultView] = useState<VaultView>("files");
   const [files, setFiles] = useState<VaultFileRecord[]>([]);
   const [stats, setStats] = useState<VaultStats | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [downloads, setDownloads] = useState<Record<string, { progress: number; detail: string }>>({});
   const [metadata, setMetadata] = useState<Record<string, VaultFileMetadata>>({});
+  const [imagePreview, setImagePreview] = useState<ImagePreviewState | undefined>();
+  const [mediaCardPreviews, setMediaCardPreviews] = useState<Record<string, MediaCardPreviewState>>({});
+  const previewObjectUrlRef = useRef<string | undefined>();
+  const previewRequestRef = useRef(0);
+  const mediaCardObjectUrlsRef = useRef(new Map<string, string>());
 
   const canLoad = Boolean(props.pairing);
   const canDownload = Boolean(props.pairing && props.masterKey);
+  const mediaFiles = useMemo(
+    () => files.filter((file) => file.status === "completed" && getMediaPreviewKind(metadata[file.id])),
+    [files, metadata]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (previewObjectUrlRef.current) {
+        URL.revokeObjectURL(previewObjectUrlRef.current);
+      }
+
+      for (const objectUrl of mediaCardObjectUrlsRef.current.values()) {
+        URL.revokeObjectURL(objectUrl);
+      }
+      mediaCardObjectUrlsRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const pairing = props.pairing;
+    const masterKey = props.masterKey;
+
+    if (vaultView !== "media" || !pairing || !masterKey) {
+      return;
+    }
+
+    let cancelled = false;
+    const mediaIds = new Set(mediaFiles.map((file) => file.id));
+
+    setMediaCardPreviews((current) => {
+      const next: Record<string, MediaCardPreviewState> = {};
+
+      for (const [fileId, preview] of Object.entries(current)) {
+        if (mediaIds.has(fileId)) {
+          next[fileId] = preview;
+        } else {
+          const objectUrl = mediaCardObjectUrlsRef.current.get(fileId);
+          if (objectUrl) {
+            URL.revokeObjectURL(objectUrl);
+            mediaCardObjectUrlsRef.current.delete(fileId);
+          }
+        }
+      }
+
+      return next;
+    });
+
+    void (async () => {
+      for (const file of mediaFiles) {
+        if (cancelled) {
+          return;
+        }
+
+        const fileMetadata = metadata[file.id];
+        const mediaKind = getMediaPreviewKind(fileMetadata);
+
+        if (!fileMetadata || !mediaKind || mediaCardObjectUrlsRef.current.has(file.id)) {
+          continue;
+        }
+
+        let shouldLoad = false;
+        setMediaCardPreviews((current) => {
+          if (current[file.id]?.status === "loading" || current[file.id]?.status === "ready") {
+            return current;
+          }
+
+          shouldLoad = true;
+          return {
+            ...current,
+            [file.id]: {
+              status: "loading",
+              mediaKind,
+              fileName: fileMetadata.fileName,
+              mimeType: fileMetadata.mimeType ?? (mediaKind === "image" ? "image/*" : "video/*"),
+              detail: "Preparando preview"
+            }
+          };
+        });
+
+        if (!shouldLoad) {
+          continue;
+        }
+
+        try {
+          const restored = await downloadAndRestoreFile({
+            fileId: file.id,
+            pairing,
+            masterKey,
+            onProgress: (event) => {
+              if (cancelled) {
+                return;
+              }
+
+              setMediaCardPreviews((current) => {
+                const existing = current[file.id];
+
+                if (!existing || existing.status !== "loading") {
+                  return current;
+                }
+
+                return {
+                  ...current,
+                  [file.id]: {
+                    ...existing,
+                    detail: `${event.detail} - ${Math.round(event.progress * 100)}%`
+                  }
+                };
+              });
+            }
+          });
+
+          const objectUrl = createObjectUrl(restored.bytes, restored.mimeType);
+          if (cancelled) {
+            URL.revokeObjectURL(objectUrl);
+            return;
+          }
+
+          const previousObjectUrl = mediaCardObjectUrlsRef.current.get(file.id);
+          if (previousObjectUrl) {
+            URL.revokeObjectURL(previousObjectUrl);
+          }
+
+          mediaCardObjectUrlsRef.current.set(file.id, objectUrl);
+          setMediaCardPreviews((current) => ({
+            ...current,
+            [file.id]: {
+              status: "ready",
+              mediaKind,
+              fileName: restored.fileName,
+              mimeType: restored.mimeType,
+              objectUrl
+            }
+          }));
+        } catch (reason) {
+          console.warn("Falha ao gerar preview da midia", file.id, reason);
+          if (!cancelled) {
+            setMediaCardPreviews((current) => ({
+              ...current,
+              [file.id]: {
+                status: "failed",
+                mediaKind,
+                fileName: fileMetadata.fileName,
+                mimeType: fileMetadata.mimeType ?? (mediaKind === "image" ? "image/*" : "video/*"),
+                detail: reason instanceof Error ? reason.message : "Nao foi possivel carregar a preview."
+              }
+            }));
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultView, props.pairing?.baseUrl, props.pairing?.token, props.masterKey, mediaFiles, metadata]);
 
   async function refresh() {
     if (!props.pairing) {
@@ -1917,6 +2102,87 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
     }
   }
 
+  async function openMediaPreview(file: VaultFileRecord): Promise<void> {
+    if (!props.pairing || !props.masterKey) {
+      setError("Desbloqueie o cofre antes de visualizar midias.");
+      return;
+    }
+
+    const fileMetadata = metadata[file.id];
+    const mediaKind = getMediaPreviewKind(fileMetadata);
+    if (!fileMetadata || !mediaKind) {
+      setError("Visualizacao disponivel apenas para midias comuns.");
+      return;
+    }
+
+    setError(undefined);
+    const requestId = previewRequestRef.current + 1;
+    previewRequestRef.current = requestId;
+    revokeCurrentPreviewUrl();
+    setImagePreview({
+      fileId: file.id,
+      fileName: fileMetadata.fileName,
+      mimeType: fileMetadata.mimeType ?? (mediaKind === "image" ? "image/*" : "video/*"),
+      mediaKind,
+      progress: 0,
+      detail: "Preparando"
+    });
+
+    try {
+      const restored = await downloadAndRestoreFile({
+        fileId: file.id,
+        pairing: props.pairing,
+        masterKey: props.masterKey,
+        onProgress: (event) => {
+          setImagePreview((current) => (
+            previewRequestRef.current === requestId && current?.fileId === file.id
+              ? { ...current, progress: event.progress, detail: event.detail }
+              : current
+          ));
+        }
+      });
+
+      if (previewRequestRef.current !== requestId) {
+        return;
+      }
+
+      const objectUrl = createObjectUrl(restored.bytes, restored.mimeType);
+      if (previewRequestRef.current !== requestId) {
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+
+      previewObjectUrlRef.current = objectUrl;
+      setImagePreview({
+        fileId: file.id,
+        fileName: restored.fileName,
+        mimeType: restored.mimeType,
+        mediaKind,
+        objectUrl,
+        progress: 1,
+        detail: "Midia pronta"
+      });
+    } catch (reason) {
+      if (previewRequestRef.current === requestId) {
+        setError(reason instanceof Error ? reason.message : "Falha ao gerar visualizacao.");
+        setImagePreview(undefined);
+      }
+    }
+  }
+
+  function closeImagePreview(): void {
+    previewRequestRef.current += 1;
+    revokeCurrentPreviewUrl();
+    setImagePreview(undefined);
+  }
+
+  function revokeCurrentPreviewUrl(): void {
+    if (previewObjectUrlRef.current) {
+      URL.revokeObjectURL(previewObjectUrlRef.current);
+      previewObjectUrlRef.current = undefined;
+    }
+  }
+
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -1959,14 +2225,28 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
 
       {canLoad && <p className="notice-line">Configuracao de armazenamento agora fica na aba Storage.</p>}
 
-      <button className="ghost-button" type="button" disabled={!canLoad} onClick={() => void refresh()}>
-        <RefreshCcw size={18} />
-        Atualizar
-      </button>
+      <div className="vault-toolbar">
+        <div className="vault-view-tabs" aria-label="Visualizacao do cofre">
+          <button className={vaultView === "files" ? "active" : ""} type="button" onClick={() => setVaultView("files")}>
+            <Vault size={17} />
+            Arquivos
+          </button>
+          <button className={vaultView === "media" ? "active" : ""} type="button" onClick={() => setVaultView("media")}>
+            <Film size={17} />
+            Midias
+          </button>
+        </div>
 
-      <div className="file-list">
-        {files.map((file) => (
-          <article className="file-row" key={file.id}>
+        <button className="ghost-button compact" type="button" disabled={!canLoad} onClick={() => void refresh()}>
+          <RefreshCcw size={18} />
+          Atualizar
+        </button>
+      </div>
+
+      {vaultView === "files" && (
+        <div className="file-list">
+          {files.map((file) => (
+            <article className="file-row" key={file.id}>
             <div>
               <strong>{shortId(file.id)}</strong>
               <span>
@@ -2002,6 +2282,19 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
               <button
                 className="icon-button"
                 type="button"
+                aria-label="Visualizar midia"
+                disabled={
+                  !canDownload ||
+                  !getMediaPreviewKind(metadata[file.id]) ||
+                  Boolean(imagePreview?.fileId === file.id && !imagePreview.objectUrl)
+                }
+                onClick={() => void openMediaPreview(file)}
+              >
+                <Eye size={18} />
+              </button>
+              <button
+                className="icon-button"
+                type="button"
                 aria-label="Baixar arquivo"
                 disabled={!canDownload || Boolean(downloads[file.id] && downloads[file.id].progress < 1)}
                 onClick={() => void restoreFile(file)}
@@ -2025,9 +2318,113 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
               <Trash2 size={18} />
             </button>
             </div>
-          </article>
-        ))}
-      </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {vaultView === "media" && (
+        <div className="media-vault-view">
+          <div className="media-vault-summary">
+            <strong>{mediaFiles.length}</strong>
+            <span>{mediaFiles.length === 1 ? "midia visualizavel" : "midias visualizaveis"}</span>
+          </div>
+
+          {mediaFiles.length === 0 && (
+            <p className="notice-line">Nenhuma midia visualizavel encontrada no cofre.</p>
+          )}
+
+          <div className="media-grid">
+            {mediaFiles.map((file) => {
+              const fileMetadata = metadata[file.id];
+              const mediaKind = getMediaPreviewKind(fileMetadata);
+              const cardPreview = mediaCardPreviews[file.id];
+
+              return (
+                <article className="media-card" key={file.id}>
+                  <div className={`media-card-preview ${cardPreview?.status ?? "pending"}`}>
+                    {cardPreview?.status === "ready" && cardPreview.mediaKind === "image" ? (
+                      <img src={cardPreview.objectUrl} alt={cardPreview.fileName} loading="lazy" />
+                    ) : cardPreview?.status === "ready" ? (
+                      <video src={cardPreview.objectUrl} muted playsInline preload="metadata" />
+                    ) : (
+                      <div className="media-card-placeholder">
+                        {mediaKind === "video" ? <Film size={30} /> : <Eye size={30} />}
+                        {cardPreview?.status === "loading" && <span>{cardPreview.detail ?? "Carregando"}</span>}
+                        {cardPreview?.status === "failed" && <span>{cardPreview.detail ?? "Preview indisponivel"}</span>}
+                      </div>
+                    )}
+                  </div>
+                  <div className="media-card-body">
+                    <strong>{fileMetadata?.fileName ?? shortId(file.id)}</strong>
+                    <span>{fileMetadata?.mimeType ?? "Midia"} - {formatBytes(file.encryptedBytes)}</span>
+                    <small>{formatDate(file.createdAt)}</small>
+                  </div>
+                  <div className="media-card-actions">
+                    <button
+                      className="primary-button compact"
+                      type="button"
+                      disabled={!canDownload || Boolean(imagePreview?.fileId === file.id && !imagePreview.objectUrl)}
+                      onClick={() => void openMediaPreview(file)}
+                    >
+                      <Eye size={16} />
+                      Visualizar
+                    </button>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      aria-label="Baixar midia"
+                      disabled={!canDownload || Boolean(downloads[file.id] && downloads[file.id].progress < 1)}
+                      onClick={() => void restoreFile(file)}
+                    >
+                      <Download size={18} />
+                    </button>
+                  </div>
+                  {downloads[file.id] && (
+                    <div className="download-progress">
+                      <div className="progress-track">
+                        <span style={{ width: `${Math.round(downloads[file.id].progress * 100)}%` }} />
+                      </div>
+                      <span>{downloads[file.id].detail}</span>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {imagePreview && (
+        <div className="preview-backdrop" role="dialog" aria-modal="true" aria-label="Visualizacao de midia">
+          <div className="image-preview-panel">
+            <div className="image-preview-header">
+              <div>
+                <strong>{imagePreview.fileName}</strong>
+                <span>{imagePreview.mimeType}</span>
+              </div>
+              <button className="icon-button" type="button" aria-label="Fechar preview" onClick={closeImagePreview}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="image-preview-stage">
+              {imagePreview.objectUrl && imagePreview.mediaKind === "image" ? (
+                <img src={imagePreview.objectUrl} alt={imagePreview.fileName} />
+              ) : imagePreview.objectUrl ? (
+                <video src={imagePreview.objectUrl} controls playsInline preload="metadata" />
+              ) : (
+                <div className="image-preview-loading">
+                  <div className="progress-track">
+                    <span style={{ width: `${Math.round(imagePreview.progress * 100)}%` }} />
+                  </div>
+                  <span>{imagePreview.detail}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <p className="error-line">{error}</p>}
     </section>
@@ -2532,6 +2929,38 @@ function formatCompressionLabel(algorithm: CompressionAlgorithm | string, strate
   }
 
   return formatCompressionAlgorithm(strategy ?? algorithm);
+}
+
+function getMediaPreviewKind(metadata?: Pick<VaultFileMetadata, "fileName" | "mimeType">): "image" | "video" | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const mimeType = metadata.mimeType?.toLowerCase() ?? "";
+  const fileName = metadata.fileName.toLowerCase();
+
+  if (["image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp", "image/avif"].includes(mimeType)) {
+    return "image";
+  }
+
+  if (["video/mp4", "video/webm", "video/ogg", "video/quicktime"].includes(mimeType)) {
+    return "video";
+  }
+
+  if ([".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"].some((extension) => fileName.endsWith(extension))) {
+    return "image";
+  }
+
+  if ([".mp4", ".webm", ".ogv", ".mov"].some((extension) => fileName.endsWith(extension))) {
+    return "video";
+  }
+
+  return undefined;
+}
+
+function createObjectUrl(bytes: Uint8Array, mimeType: string): string {
+  const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  return URL.createObjectURL(new Blob([body], { type: mimeType || "application/octet-stream" }));
 }
 
 function formatBytes(value: number): string {

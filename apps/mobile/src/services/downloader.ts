@@ -10,6 +10,7 @@ export interface DownloadProgressEvent {
 
 export interface VaultFileMetadata {
   fileName: string;
+  mimeType?: string;
   originalSize: number;
   compressedSize: number;
   compressionAlgorithm: string;
@@ -31,6 +32,7 @@ export async function loadVaultFileMetadata(input: {
 
   return {
     fileName: manifest.originalName || `kazvault-${input.fileId}`,
+    mimeType: manifest.mimeType,
     originalSize: manifest.originalSize,
     compressedSize: manifest.compressedSize,
     compressionAlgorithm: manifest.compressionAlgorithm,
