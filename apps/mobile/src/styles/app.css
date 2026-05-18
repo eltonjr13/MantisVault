@@ -145,6 +145,14 @@ h3 {
   min-width: 0;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .brand-emblem {
   display: grid;
   place-items: center;
@@ -1358,6 +1366,13 @@ textarea:focus {
   border-radius: var(--radius-sm);
 }
 
+.sync-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .storage-warnings p {
   display: flex;
   align-items: center;
@@ -1573,8 +1588,18 @@ textarea:focus {
     flex-direction: column;
   }
 
-  .status-pill {
+  .topbar-actions {
     width: 100%;
+    justify-content: stretch;
+  }
+
+  .topbar-actions .ghost-button {
+    flex: 1;
+  }
+
+  .status-pill {
+    flex: 1;
+    width: auto;
   }
 
   .tabbar {

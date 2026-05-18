@@ -57,6 +57,7 @@ import {
   getStorageUsage,
   getRemoteVaultKeyring,
   getVaultStats,
+  isServerAvailable,
   archiveEmailVault,
   cleanupEmailVault,
   importCalendarIcs,
@@ -102,6 +103,13 @@ import {
   saveRestoredFile,
   type VaultFileMetadata
 } from "./services/downloader";
+import {
+  clearOfflineUploadItems,
+  deleteOfflineUploadItem,
+  loadOfflineUploadQueue,
+  patchOfflineUploadItem,
+  saveOfflineUploadItem
+} from "./services/offlineUploadQueue";
 
 type Tab = "pair" | "sources" | "upload" | "vault" | "storage" | "security";
 
@@ -112,6 +120,8 @@ interface QueueItem {
   progress: number;
   detail: string;
   completedChunks: number[];
+  queuedAt: string;
+  poolId?: string;
   compression?: {
     originalSize: number;
     compressedSize: number;
@@ -125,6 +135,11 @@ interface QueueItem {
   uploadId?: string;
   fileId?: string;
   error?: string;
+}
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
 interface ImagePreviewState {
@@ -164,6 +179,7 @@ export function App() {
   const [appError, setAppError] = useState<string | undefined>();
   const controllers = useRef(new Map<string, AbortController>());
   const controllersMap = useMemo(() => controllers.current, []);
+  const installPrompt = usePwaInstallPrompt();
 
   const locked = !masterKey;
 
@@ -344,9 +360,17 @@ export function App() {
             <h1>KazVault</h1>
           </div>
         </div>
-        <div className={locked ? "status-pill status-locked" : "status-pill"}>
-          <ShieldCheck size={18} />
-          {locked ? "Bloqueado" : "Chave ativa"}
+        <div className="topbar-actions">
+          {installPrompt.canInstall && (
+            <button className="ghost-button compact" type="button" onClick={() => void installPrompt.install()}>
+              <Download size={16} />
+              Instalar app
+            </button>
+          )}
+          <div className={locked ? "status-pill status-locked" : "status-pill"}>
+            <ShieldCheck size={18} />
+            {locked ? "Bloqueado" : "Chave ativa"}
+          </div>
         </div>
       </header>
 
@@ -445,6 +469,41 @@ function useAutoRefresh(refresh: () => Promise<void> | void, deps: ReadonlyArray
       document.removeEventListener("visibilitychange", runWhenVisible);
     };
   }, deps);
+}
+
+function usePwaInstallPrompt() {
+  const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | undefined>();
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallEvent(event as BeforeInstallPromptEvent);
+    };
+    const handleInstalled = () => {
+      setInstallEvent(undefined);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
+    };
+  }, []);
+
+  return {
+    canInstall: Boolean(installEvent),
+    install: async () => {
+      if (!installEvent) {
+        return;
+      }
+
+      await installEvent.prompt();
+      await installEvent.userChoice.catch(() => undefined);
+      setInstallEvent(undefined);
+    }
+  };
 }
 
 function SecurityPanel(props: {
@@ -1619,6 +1678,37 @@ function UploadPanel(props: {
     () => [...storagePools].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [storagePools]
   );
+  const queueRef = useRef<QueueItem[]>([]);
+  const syncRunningRef = useRef(false);
+  const queuedCount = queue.filter((item) => item.status !== "completed").length;
+  const runningCount = queue.filter((item) => isUploadRunning(item.status)).length;
+
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
+
+  useEffect(() => {
+    let active = true;
+
+    void loadOfflineUploadQueue()
+      .then((items) => {
+        if (!active) {
+          return;
+        }
+
+        setQueue((current) => {
+          const currentIds = new Set(current.map((item) => item.id));
+          return [...items.filter((item) => !currentIds.has(item.id)), ...current];
+        });
+      })
+      .catch((reason: unknown) => {
+        console.warn("Nao foi possivel carregar fila offline.", reason);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useAutoRefresh(() => {
     if (!props.pairing) {
@@ -1639,8 +1729,12 @@ function UploadPanel(props: {
       });
   }, [props.pairing?.baseUrl, props.pairing?.token]);
 
-  function updateItem(id: string, patch: Partial<QueueItem>) {
+  function updateItem(id: string, patch: Partial<QueueItem>, persist = true) {
     setQueue((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+
+    if (persist && patch.status !== "completed") {
+      persistItemPatch(id, patch);
+    }
   }
 
   async function startUpload(item: QueueItem) {
@@ -1648,50 +1742,170 @@ function UploadPanel(props: {
       return;
     }
 
-    const controller = new AbortController();
-    props.controllers.set(item.id, controller);
+    const currentItem = queueRef.current.find((queued) => queued.id === item.id) ?? item;
 
-    updateItem(item.id, { status: "pending", error: undefined });
+    if (props.controllers.has(currentItem.id)) {
+      return;
+    }
+
+    const serverOnline = await isServerAvailable(props.pairing.baseUrl);
+
+    if (!serverOnline) {
+      updateItem(currentItem.id, {
+        status: "paused",
+        detail: "Aguardando PC/servidor ligar",
+        error: undefined
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    props.controllers.set(currentItem.id, controller);
+    const poolId = currentItem.poolId ?? selectedPoolId;
+
+    updateItem(currentItem.id, {
+      status: "pending",
+      detail: "Preparando sincronizacao",
+      error: undefined,
+      poolId
+    });
 
     try {
       await uploadEncryptedFile({
-        file: item.file,
+        file: currentItem.file,
         masterKey: props.masterKey,
         pairing: props.pairing,
-        poolId: selectedPoolId,
+        poolId,
         signal: controller.signal,
         resume: {
-          uploadId: item.uploadId,
-          fileId: item.fileId,
-          completedChunks: item.completedChunks
+          uploadId: currentItem.uploadId,
+          fileId: currentItem.fileId,
+          completedChunks: currentItem.completedChunks
         },
         onProgress: (event) => {
-          updateItem(item.id, {
+          const latest = queueRef.current.find((queued) => queued.id === currentItem.id) ?? currentItem;
+
+          updateItem(currentItem.id, {
             status: event.status,
             progress: event.progress,
             detail: event.detail,
-            compression: event.compression ?? item.compression,
-            completedChunks: event.completedChunks ?? item.completedChunks,
-            uploadId: event.uploadId ?? item.uploadId,
-            fileId: event.fileId ?? item.fileId
+            compression: event.compression ?? latest.compression,
+            completedChunks: event.completedChunks ?? latest.completedChunks,
+            uploadId: event.uploadId ?? latest.uploadId,
+            fileId: event.fileId ?? latest.fileId
           });
         }
       });
+      await deleteOfflineUploadItem(currentItem.id);
     } catch (reason) {
       const aborted = reason instanceof DOMException && reason.name === "AbortError";
-      updateItem(item.id, {
-        status: aborted ? "paused" : "failed",
-        error: aborted ? undefined : reason instanceof Error ? reason.message : "Upload falhou.",
-        detail: aborted ? "Pausado" : "Falhou"
+      const offline = !aborted && isOfflineFailure(reason);
+
+      updateItem(currentItem.id, {
+        status: aborted || offline ? "paused" : "failed",
+        error: aborted || offline ? undefined : reason instanceof Error ? reason.message : "Upload falhou.",
+        detail: aborted ? "Pausado" : offline ? "Aguardando PC/servidor ligar" : "Falhou"
       });
     } finally {
-      props.controllers.delete(item.id);
+      props.controllers.delete(currentItem.id);
     }
   }
 
   function pauseUpload(id: string) {
     props.controllers.get(id)?.abort();
   }
+
+  async function enqueueFiles(files: File[]) {
+    const createdAt = Date.now();
+    const newItems = files.map((file, index) => ({
+      id: `${createdAt}-${index}-${Math.random().toString(36).substring(2, 9)}`,
+      file,
+      status: "pending" as UploadStatus,
+      progress: 0,
+      detail: "Salvando fila local",
+      completedChunks: [],
+      queuedAt: new Date(createdAt + index).toISOString(),
+      poolId: selectedPoolId
+    }));
+
+    setQueue((items) => [...items, ...newItems]);
+
+    await Promise.all(
+      newItems.map(async (item) => {
+        try {
+          await saveOfflineUploadItem(item);
+          updateItem(item.id, { detail: "Aguardando sincronizacao" }, false);
+        } catch (reason) {
+          updateItem(item.id, {
+            status: "failed",
+            detail: "Fila local falhou",
+            error: reason instanceof Error ? reason.message : "Nao foi possivel salvar o arquivo localmente."
+          }, false);
+        }
+      })
+    );
+  }
+
+  async function syncPendingQueue() {
+    if (!ready || !props.pairing || !props.masterKey || syncRunningRef.current) {
+      return;
+    }
+
+    const candidates = queueRef.current.filter((item) => isSyncableQueueItem(item) && !props.controllers.has(item.id));
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const serverOnline = await isServerAvailable(props.pairing.baseUrl);
+
+    if (!serverOnline) {
+      candidates.forEach((item) => {
+        updateItem(item.id, {
+          status: "paused",
+          detail: "Aguardando PC/servidor ligar",
+          error: undefined
+        });
+      });
+      return;
+    }
+
+    syncRunningRef.current = true;
+
+    try {
+      for (const item of candidates) {
+        await startUpload(item);
+      }
+    } finally {
+      syncRunningRef.current = false;
+    }
+  }
+
+  useEffect(() => {
+    if (!ready) {
+      return;
+    }
+
+    const run = () => {
+      void syncPendingQueue();
+    };
+    const runWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        run();
+      }
+    };
+
+    run();
+    window.addEventListener("online", run);
+    document.addEventListener("visibilitychange", runWhenVisible);
+    const interval = window.setInterval(run, 30_000);
+
+    return () => {
+      window.removeEventListener("online", run);
+      document.removeEventListener("visibilitychange", runWhenVisible);
+      window.clearInterval(interval);
+    };
+  }, [ready, props.pairing?.baseUrl, props.pairing?.token, props.masterKey, selectedPoolId, queue.length]);
 
   return (
     <section className="panel">
@@ -1704,6 +1918,13 @@ function UploadPanel(props: {
       </div>
 
       {!ready && <p className="notice-line">Desbloqueie o cofre e conclua o pareamento antes de enviar arquivos.</p>}
+
+      {queue.length > 0 && (
+        <p className="notice-line sync-summary">
+          <Cloud size={16} />
+          Fila local: {queuedCount} aguardando envio{runningCount > 0 ? `, ${runningCount} em sincronizacao` : ""}.
+        </p>
+      )}
 
       {visiblePools.length > 1 && (
         <label className="pool-select">
@@ -1730,19 +1951,8 @@ function UploadPanel(props: {
           onChange={(event) => {
             try {
               const files = [...(event.target.files ?? [])];
-              
-              setQueue((items) => {
-                const newItems = files.map((file) => ({
-                  id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                  file,
-                  status: "pending" as UploadStatus,
-                  progress: 0,
-                  detail: "Aguardando",
-                  completedChunks: []
-                }));
-                return [...items, ...newItems];
-              });
-              
+
+              void enqueueFiles(files).then(() => void syncPendingQueue());
               event.currentTarget.value = "";
             } catch (error) {
               console.error("Error in file input onChange:", error);
@@ -1771,6 +1981,8 @@ function UploadPanel(props: {
             className="ghost-button"
             type="button"
             onClick={() => {
+              const completedIds = queue.filter((item) => item.status === "completed").map((item) => item.id);
+              void clearOfflineUploadItems(completedIds);
               setQueue((items) => items.filter((item) => item.status !== "completed"));
             }}
           >
@@ -1781,6 +1993,8 @@ function UploadPanel(props: {
             className="ghost-button"
             type="button"
             onClick={() => {
+              queue.forEach((item) => props.controllers.get(item.id)?.abort());
+              void clearOfflineUploadItems(queue.map((item) => item.id));
               setQueue([]);
             }}
           >
@@ -1803,7 +2017,7 @@ function UploadPanel(props: {
             </div>
             <div className="queue-meta">
               <span className={`state-dot ${item.status}`} />
-              <span>{item.status}</span>
+              <span>{formatUploadStatus(item.status)}</span>
               <span>{Math.round(item.progress * 100)}%</span>
               <span>{item.detail}</span>
               {item.status === "completed" && <CheckCircle2 size={18} color="#22c55e" />}
@@ -1836,6 +2050,68 @@ function UploadPanel(props: {
       </div>
     </section>
   );
+}
+
+function persistItemPatch(id: string, patch: Partial<QueueItem>): void {
+  const persistable: Parameters<typeof patchOfflineUploadItem>[1] = {};
+
+  if ("status" in patch) persistable.status = patch.status;
+  if ("progress" in patch) persistable.progress = patch.progress;
+  if ("detail" in patch) persistable.detail = patch.detail;
+  if ("completedChunks" in patch) persistable.completedChunks = patch.completedChunks;
+  if ("poolId" in patch) persistable.poolId = patch.poolId;
+  if ("uploadId" in patch) persistable.uploadId = patch.uploadId;
+  if ("fileId" in patch) persistable.fileId = patch.fileId;
+  if ("compression" in patch) persistable.compression = patch.compression;
+  if ("error" in patch) persistable.error = patch.error;
+
+  if (Object.keys(persistable).length === 0) {
+    return;
+  }
+
+  void patchOfflineUploadItem(id, persistable).catch((reason: unknown) => {
+    console.warn("Nao foi possivel atualizar fila offline.", reason);
+  });
+}
+
+function isUploadRunning(status: UploadStatus): boolean {
+  return status === "compressing" || status === "encrypting" || status === "uploading";
+}
+
+function isSyncableQueueItem(item: QueueItem): boolean {
+  return item.status === "pending" || item.status === "paused";
+}
+
+function isOfflineFailure(reason: unknown): boolean {
+  if (navigator.onLine === false) {
+    return true;
+  }
+
+  if (reason instanceof TypeError) {
+    return true;
+  }
+
+  const message = reason instanceof Error ? reason.message.toLowerCase() : "";
+  return (
+    message.includes("failed to fetch") ||
+    message.includes("networkerror") ||
+    message.includes("network request failed") ||
+    message.includes("load failed")
+  );
+}
+
+function formatUploadStatus(status: UploadStatus): string {
+  const labels: Record<UploadStatus, string> = {
+    pending: "Aguardando",
+    compressing: "Comprimindo",
+    encrypting: "Criptografando",
+    uploading: "Enviando",
+    paused: "Pausado",
+    completed: "Concluido",
+    failed: "Falhou"
+  };
+
+  return labels[status];
 }
 
 function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {

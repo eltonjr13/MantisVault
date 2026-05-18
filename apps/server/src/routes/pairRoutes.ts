@@ -1,3 +1,5 @@
+import { createReadStream, existsSync } from "node:fs";
+import { join } from "node:path";
 import QRCode from "qrcode";
 import type { FastifyInstance } from "fastify";
 import type { AuthSession } from "@kazvault/shared";
@@ -76,6 +78,19 @@ export async function registerPairRoutes(
   app.get("/pair", async (_request, reply) => {
     const qr = await createPairQr(pairingService, 460, true);
     return reply.header("cache-control", "no-store").type("text/html; charset=utf-8").send(renderPairPage(qr));
+  });
+
+  app.get("/app/kazvault.apk", async (_request, reply) => {
+    const apkPath = findAndroidApk();
+
+    if (!apkPath) {
+      return reply.code(404).type("text/html; charset=utf-8").send(renderApkMissingPage());
+    }
+
+    return reply
+      .header("content-disposition", 'attachment; filename="kazvault-debug.apk"')
+      .type("application/vnd.android.package-archive")
+      .send(createReadStream(apkPath));
   });
 
   app.get<{ Querystring: { fresh?: string } }>("/pair/qr.png", async (request, reply) => {
@@ -201,11 +216,12 @@ function renderPairPage(qr: PairQr): string {
         <ol>
           <li>Abra o KazVault no celular.</li>
           <li>Escaneie este QR com a camera do celular ou pelo botao Escanear QR do app.</li>
-          <li>Se abrir no navegador, toque em Abrir KazVault.</li>
+          <li>Se abrir no navegador, toque em Abrir KazVault e depois em Instalar app.</li>
           <li>O QR troca sozinho a cada 2 minutos.</li>
         </ol>
         <div class="actions">
-          <a id="mobileUrl" href="${escapeHtml(qr.mobileUrl)}" target="_blank" rel="noreferrer">Abrir KazVault</a>
+          <a id="mobileUrl" href="${escapeHtml(qr.mobileUrl)}" target="_blank" rel="noreferrer">Abrir / instalar KazVault</a>
+          <a href="/app/kazvault.apk" class="ghost">Baixar app Android</a>
           <a href="/pair/qr.png?fresh=1" target="_blank" rel="noreferrer" class="ghost">Abrir imagem QR</a>
           <button id="refreshButton" class="ghost" type="button">Gerar novo QR</button>
         </div>
@@ -311,6 +327,33 @@ function renderPairPage(qr: PairQr): string {
 </html>`;
 }
 
+function renderApkMissingPage(): string {
+  return `<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>APK KazVault</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #080b10; color: #eef4f2; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 22px; background: #080b10; }
+      main { width: min(620px, 100%); display: grid; gap: 14px; padding: 22px; border: 1px solid rgba(137,216,203,.28); border-radius: 8px; background: rgba(12,18,29,.94); }
+      h1, p { margin: 0; }
+      p { color: #a8b3bd; line-height: 1.55; }
+      code { color: #ffd08a; overflow-wrap: anywhere; }
+      a { color: #89d8cb; font-weight: 800; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>APK ainda nao gerado</h1>
+      <p>Rode <code>corepack pnpm --filter @kazvault/mobile android:apk</code> no PC. Depois volte para esta pagina e toque em Baixar app Android.</p>
+      <p><a href="/pair">Voltar ao pareamento</a></p>
+    </main>
+  </body>
+</html>`;
+}
+
 function renderConnectPage(input: { serverName: string; baseUrl: string; mobileUrl: string; expiresAt: string }): string {
   return `<!doctype html>
 <html lang="pt-BR">
@@ -369,6 +412,17 @@ function createMobilePairUrl(payload: { baseUrl: string }, encodedPayload: strin
   url.search = "";
   url.searchParams.set("pair", encodedPayload);
   return url.toString();
+}
+
+function findAndroidApk(): string | undefined {
+  const candidates = [
+    process.env.KAZVAULT_ANDROID_APK,
+    join(process.cwd(), "apps", "mobile", "dist", "kazvault-debug.apk"),
+    join(process.cwd(), "..", "mobile", "dist", "kazvault-debug.apk"),
+    join(process.cwd(), "dist", "kazvault-debug.apk")
+  ].filter((value): value is string => Boolean(value));
+
+  return candidates.find((candidate) => existsSync(candidate));
 }
 
 function parseEncodedPayload(encodedPayload: string): { serverName: string; baseUrl: string; expiresAt: string } | undefined {

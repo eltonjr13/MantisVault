@@ -1,0 +1,19 @@
+{
+  "name": "KazVault",
+  "short_name": "KazVault",
+  "description": "Cofre local KazVault para enviar arquivos do celular ao armazenamento do PC.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#071011",
+  "theme_color": "#071011",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

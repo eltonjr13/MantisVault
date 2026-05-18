@@ -62,17 +62,27 @@ pnpm android
 ```
 
 O comando `pnpm android` sincroniza o build web com Capacitor e abre o projeto Android.
+O app mobile tambem possui manifest e service worker para instalacao como PWA quando servido em contexto seguro. Depois de instalado, ele abre no celular mesmo com o PC offline e sincroniza a fila quando o servidor voltar.
+
+Para gerar um APK debug baixavel pela tela de pareamento:
+
+```bash
+corepack pnpm --filter @kazvault/mobile android:apk
+```
+
+O APK e copiado para `apps/mobile/dist/kazvault-debug.apk` e fica disponivel no servidor em `http://localhost:4577/app/kazvault.apk`.
 
 ## Fluxo do MVP
 
 1. Inicie o servidor.
 2. No PC, abra `http://localhost:4577` ou `http://localhost:4577/pair` para ver a imagem do QR Code.
 3. Escaneie o QR Code exibido no PC. O QR abre o KazVault no celular com o pareamento preenchido, sem copiar JSON.
-4. O cofre local e criado automaticamente no celular e a chave de recuperacao e exibida.
-5. Selecione arquivos.
-6. O app comprime, criptografa, divide em chunks e envia para o servidor.
-7. O servidor grava somente `manifest.enc` e chunks criptografados.
-8. Para recuperar, abra a aba Cofre no app, toque em baixar e o app descriptografa, descomprime e salva o arquivo original.
+4. Se abrir no navegador, use o botao `Instalar app` para manter o KazVault no celular.
+5. O cofre local e criado automaticamente no celular e a chave de recuperacao e exibida.
+6. Selecione arquivos.
+7. O app salva a fila localmente, comprime, criptografa, divide em chunks e envia quando o servidor estiver disponivel.
+8. O servidor grava somente `manifest.enc` e chunks criptografados.
+9. Para recuperar, abra a aba Cofre no app, toque em baixar e o app descriptografa, descomprime e salva o arquivo original.
 
 O QR Code da tela `/pair` e temporario, atualiza automaticamente a cada 2 minutos e para de atualizar quando o celular confirma o pareamento.
 

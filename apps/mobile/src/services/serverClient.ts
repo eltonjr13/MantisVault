@@ -272,6 +272,24 @@ export async function fetchPairPayload(baseUrl: string): Promise<PairPayload> {
   return (await fetchPairQr(baseUrl)).payload;
 }
 
+export async function isServerAvailable(baseUrl: string, timeoutMs = 2500): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${trimSlash(baseUrl)}/health`, {
+      cache: "no-store",
+      signal: controller.signal
+    });
+
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 export async function fetchPairQr(baseUrl: string, fresh = false): Promise<PairQrResponse> {
   const url = new URL(`${trimSlash(baseUrl)}/api/pair/qr`);
 
