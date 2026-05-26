@@ -294,6 +294,26 @@ export class VaultDatabase {
     this.db.run("CREATE INDEX IF NOT EXISTS idx_connector_credentials_connector_id ON connector_credentials(connector_id);");
     this.db.run("CREATE INDEX IF NOT EXISTS idx_auth_device_sessions_account ON auth_device_sessions(account_id);");
     this.db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_device_sessions_refresh ON auth_device_sessions(refresh_token_hash);");
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS backup_sources (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        path TEXT,
+        sync_interval TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL,
+        last_sync_at TEXT,
+        next_sync_at TEXT,
+        protected_files_count INTEGER NOT NULL DEFAULT 0,
+        errors_count INTEGER NOT NULL DEFAULT 0,
+        recent_errors TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_backup_sources_enabled_next_sync ON backup_sources(enabled, next_sync_at);");
   }
 
   private persist(): void {

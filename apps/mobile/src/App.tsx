@@ -369,7 +369,7 @@ export function App() {
           )}
           <div className={locked ? "status-pill status-locked" : "status-pill"}>
             <ShieldCheck size={18} />
-            {locked ? "Bloqueado" : "Chave ativa"}
+            <span>{locked ? "Bloqueado" : "Chave ativa"}</span>
           </div>
         </div>
       </header>
@@ -1242,8 +1242,8 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
         <>
           <div className="sources-toolbar">
             <div className="source-badge-row">
-              <span className="storage-badge active">Local-first</span>
-              <span className="storage-badge active">Criptografado</span>
+              <span className="storage-badge active"><span>Local-first</span></span>
+              <span className="storage-badge active"><span>Criptografado</span></span>
             </div>
             <button className="ghost-button" type="button" onClick={() => void refresh(selectedConnectorId)}>
               <RefreshCcw size={18} />
@@ -1270,9 +1270,9 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
                   </div>
 
                   <div className="source-badge-row">
-                    <span className="storage-badge active">Local-first</span>
-                    <span className="storage-badge active">Criptografado</span>
-                    {!capability.available && <span className="storage-badge degraded">Configurar env</span>}
+                    <span className="storage-badge active"><span>Local-first</span></span>
+                    <span className="storage-badge active"><span>Criptografado</span></span>
+                    {!capability.available && <span className="storage-badge degraded"><span>Configurar env</span></span>}
                   </div>
 
                   <p className="connector-copy">{connectorHelp(capability.type, connector, gmailPending)}</p>
@@ -1607,9 +1607,9 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
                             <span>{candidate.from ?? "Remetente mascarado"} - {candidate.date ? formatDate(candidate.date) : "Sem data"}</span>
                             <small>{candidate.reasons.join(" ")}</small>
                             <div className="source-badge-row">
-                              <span className={`storage-badge ${candidate.importance}`}>{emailImportanceLabel(candidate.importance)}</span>
-                              {candidate.archived && <span className="storage-badge active">Arquivado</span>}
-                              <span className="storage-badge disconnected">{candidate.attachments.length} anexos</span>
+                              <span className={`storage-badge ${candidate.importance}`}><span>{emailImportanceLabel(candidate.importance)}</span></span>
+                              {candidate.archived && <span className="storage-badge active"><span>Arquivado</span></span>}
+                              <span className="storage-badge disconnected"><span>{candidate.attachments.length} anexos</span></span>
                             </div>
                           </div>
                           <div className="email-candidate-size">
@@ -2505,11 +2505,11 @@ function VaultPanel(props: { pairing?: PairPayload; masterKey?: Uint8Array }) {
         <div className="vault-view-tabs" aria-label="Visualizacao do cofre">
           <button className={vaultView === "files" ? "active" : ""} type="button" onClick={() => setVaultView("files")}>
             <Vault size={17} />
-            Arquivos
+            <span>Arquivos</span>
           </button>
           <button className={vaultView === "media" ? "active" : ""} type="button" onClick={() => setVaultView("media")}>
             <Film size={17} />
-            Midias
+            <span>Midias</span>
           </button>
         </div>
 
@@ -3043,13 +3043,13 @@ function StorageHealthBadge(props: { status: string }) {
   return (
     <span className={`storage-badge ${props.status}`}>
       <Activity size={16} />
-      {props.status}
+      <span>{props.status}</span>
     </span>
   );
 }
 
 function StorageLocationBadge(props: { status: string }) {
-  return <span className={`storage-badge ${props.status}`}>{props.status}</span>;
+  return <span className={`storage-badge ${props.status}`}><span>{props.status}</span></span>;
 }
 
 function StorageWarningsPanel(props: { alerts: StorageUsage["alerts"] }) {
@@ -3090,7 +3090,7 @@ function ConnectorStatusBadge(props: { status: ConnectorRecord["status"] }) {
     revoked: "Revogado"
   };
 
-  return <span className={`storage-badge ${props.status}`}>{labels[props.status]}</span>;
+  return <span className={`storage-badge ${props.status}`}><span>{labels[props.status]}</span></span>;
 }
 
 function emailImportanceLabel(value: "high" | "medium" | "low"): string {

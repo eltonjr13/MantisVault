@@ -186,6 +186,7 @@ function renderPairPage(qr: PairQr): string {
       .paired .timer, .paired ol { display: none; }
       .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
       a, button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0 16px; border: 0; border-radius: 8px; color: #061014; background: #89d8cb; font-weight: 800; text-decoration: none; cursor: pointer; }
+      .server a.inline-link { display: inline; min-height: 0; padding: 0; color: #89d8cb; background: transparent; text-decoration: underline; }
       .ghost { color: #eef4f2; background: rgba(15,23,42,.78); border: 1px solid rgba(148,163,184,.26); }
       ol { margin: 0; padding-left: 22px; color: #d7dee7; line-height: 1.7; }
       @media (max-width: 640px) { body { padding: 14px; } .qr-card { padding: 16px; } }
@@ -211,17 +212,19 @@ function renderPairPage(qr: PairQr): string {
           <span id="serverName">${escapeHtml(qr.payload.serverName)}</span>
           <strong id="baseUrl">${escapeHtml(qr.payload.baseUrl)}</strong>
           <code id="fingerprint">${escapeHtml(qr.payload.fingerprint)}</code>
+          <small>APK Android: <a class="inline-link" href="${escapeHtml(createApkUrl(qr.payload.baseUrl))}">${escapeHtml(createApkUrl(qr.payload.baseUrl))}</a></small>
           <small>Token expira em <span id="expiresAt">${escapeHtml(formatDate(qr.payload.expiresAt))}</span></small>
         </div>
         <ol>
-          <li>Abra o KazVault no celular.</li>
-          <li>Escaneie este QR com a camera do celular ou pelo botao Escanear QR do app.</li>
-          <li>Se abrir no navegador, toque em Abrir KazVault e depois em Instalar app.</li>
+          <li>Baixe e instale o APK pelo botao Baixar APK Android.</li>
+          <li>Abra o KazVault instalado no celular e entre em Parear.</li>
+          <li>Toque em Escanear QR e aponte para este codigo.</li>
+          <li>Para teste pelo navegador/PWA, use Abrir KazVault no navegador.</li>
           <li>O QR troca sozinho a cada 2 minutos.</li>
         </ol>
         <div class="actions">
-          <a id="mobileUrl" href="${escapeHtml(qr.mobileUrl)}" target="_blank" rel="noreferrer">Abrir / instalar KazVault</a>
-          <a href="/app/kazvault.apk" class="ghost">Baixar app Android</a>
+          <a id="mobileUrl" href="${escapeHtml(qr.mobileUrl)}" target="_blank" rel="noreferrer">Abrir KazVault no navegador</a>
+          <a href="${escapeHtml(createApkUrl(qr.payload.baseUrl))}" class="ghost">Baixar APK Android</a>
           <a href="/pair/qr.png?fresh=1" target="_blank" rel="noreferrer" class="ghost">Abrir imagem QR</a>
           <button id="refreshButton" class="ghost" type="button">Gerar novo QR</button>
         </div>
@@ -347,7 +350,7 @@ function renderApkMissingPage(): string {
   <body>
     <main>
       <h1>APK ainda nao gerado</h1>
-      <p>Rode <code>corepack pnpm --filter @kazvault/mobile android:apk</code> no PC. Depois volte para esta pagina e toque em Baixar app Android.</p>
+      <p>Rode <code>corepack pnpm beta:build</code> no PC. Depois volte para esta pagina e toque em Baixar APK Android.</p>
       <p><a href="/pair">Voltar ao pareamento</a></p>
     </main>
   </body>
@@ -402,6 +405,13 @@ function createConnectUrl(payload: { baseUrl: string }, encodedPayload: string):
   url.pathname = "/pair/connect";
   url.search = "";
   url.searchParams.set("p", encodedPayload);
+  return url.toString();
+}
+
+function createApkUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  url.pathname = "/app/kazvault.apk";
+  url.search = "";
   return url.toString();
 }
 

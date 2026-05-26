@@ -8,6 +8,8 @@
     "dev:server": "corepack pnpm --filter @kazvault/server dev",
     "dev:mobile": "corepack pnpm --filter @kazvault/mobile dev --host 0.0.0.0",
     "build": "corepack pnpm -r build",
+    "beta:build": "corepack pnpm build && corepack pnpm --filter @kazvault/mobile android:apk",
+    "beta:server": "node scripts/beta-server.mjs",
     "typecheck": "corepack pnpm --filter @kazvault/shared build && corepack pnpm --filter @kazvault/crypto build && corepack pnpm --filter @kazvault/compression build && corepack pnpm -r typecheck",
     "android": "corepack pnpm --filter @kazvault/mobile android"
   },

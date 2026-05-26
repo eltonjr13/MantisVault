@@ -36,6 +36,8 @@
   --glow-teal: 0 0 28px rgba(25, 198, 179, 0.2);
   --glow-coral: 0 0 28px rgba(255, 84, 74, 0.16);
   --transition: 200ms ease;
+  --topbar-action-width: 148px;
+  --action-button-width: 154px;
 }
 
 * {
@@ -96,6 +98,19 @@ button {
   border: 0;
 }
 
+button,
+select,
+.status-pill,
+.storage-badge {
+  min-width: 0;
+}
+
+button svg,
+.status-pill svg,
+.storage-badge svg {
+  flex: 0 0 auto;
+}
+
 h1,
 h2,
 h3,
@@ -151,6 +166,7 @@ h3 {
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+  flex: 0 0 auto;
 }
 
 .brand-emblem {
@@ -197,6 +213,20 @@ h3 {
   white-space: nowrap;
 }
 
+.status-pill span,
+.storage-badge span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-actions .ghost-button.compact,
+.topbar-actions .status-pill {
+  width: var(--topbar-action-width);
+  flex: 0 0 var(--topbar-action-width);
+}
+
 .status-pill.status-locked {
   border-color: rgba(245, 165, 36, 0.3);
   color: var(--warning);
@@ -241,9 +271,18 @@ h3 {
 
 .tab-button {
   min-width: 0;
+  overflow: hidden;
   border: 1px solid transparent;
   color: var(--muted);
   background: transparent;
+}
+
+.tab-button span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tab-button:hover,
@@ -272,6 +311,15 @@ h3 {
   border: 1px solid var(--border);
   color: var(--text-soft);
   background: rgba(255, 255, 255, 0.035);
+}
+
+.primary-button,
+.ghost-button,
+.vault-view-tabs button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ghost-button:hover,
@@ -396,6 +444,15 @@ summary:focus-visible {
   margin-bottom: 20px;
 }
 
+.panel-heading > div,
+.brand-lockup > div,
+.storage-overview div,
+.secure-state div,
+.connector-card-title div,
+.location-card > div:first-child > div {
+  min-width: 0;
+}
+
 .panel-heading svg {
   flex: 0 0 auto;
   color: var(--teal-neon);
@@ -494,6 +551,15 @@ summary:focus-visible {
 .location-meta,
 .pair-grid {
   flex-wrap: wrap;
+}
+
+.queue-actions .ghost-button,
+.inline-actions .ghost-button,
+.file-actions .ghost-button,
+.file-actions .primary-button,
+.media-card-actions .primary-button {
+  width: var(--action-button-width);
+  flex: 0 0 var(--action-button-width);
 }
 
 .connector-form-row {
@@ -1030,6 +1096,13 @@ textarea:focus {
   font-weight: 850;
 }
 
+.vault-view-tabs button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vault-view-tabs button.active {
   border-color: rgba(25, 198, 179, 0.28);
   color: var(--teal-neon);
@@ -1335,9 +1408,10 @@ textarea:focus {
 
 .mode-card {
   display: grid;
+  grid-template-rows: auto auto 1fr;
   align-content: start;
   gap: 8px;
-  min-height: 168px;
+  height: 168px;
   padding: 14px;
   color: var(--text-soft);
   text-align: left;
@@ -1346,6 +1420,13 @@ textarea:focus {
 
 .mode-card svg {
   color: var(--warning);
+}
+
+.mode-card span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .mode-card.active {
@@ -1593,11 +1674,12 @@ textarea:focus {
     justify-content: stretch;
   }
 
-  .topbar-actions .ghost-button {
+  .topbar-actions .ghost-button.compact {
     flex: 1;
+    width: auto;
   }
 
-  .status-pill {
+  .topbar-actions .status-pill {
     flex: 1;
     width: auto;
   }
@@ -1614,7 +1696,7 @@ textarea:focus {
   }
 
   .tab-button {
-    min-height: 56px;
+    height: 56px;
     flex-direction: column;
     gap: 3px;
     padding: 4px 2px;
@@ -1697,6 +1779,15 @@ textarea:focus {
     width: 100%;
     justify-content: space-between;
   }
+
+  .queue-actions .ghost-button,
+  .inline-actions .ghost-button,
+  .file-actions .ghost-button,
+  .file-actions .primary-button,
+  .media-card-actions .primary-button {
+    width: 100%;
+    flex: 1 1 0;
+  }
 }
 
 @media (max-width: 460px) {
@@ -1717,9 +1808,6 @@ textarea:focus {
 
   .tab-button span {
     max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .stats-grid {
