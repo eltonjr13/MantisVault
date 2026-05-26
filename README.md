@@ -23,6 +23,59 @@ kazvault/
     compression/
 ```
 
+## Comece aqui em 5 minutos
+
+Fluxo recomendado para entregar uma beta local para alguem testar no PC + Android:
+
+1. Instale as dependencias:
+
+```bash
+corepack enable
+corepack pnpm install
+```
+
+2. Crie o `.env` na raiz do projeto:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edite pelo menos `KAZVAULT_STORAGE_DIR` para uma pasta do PC, por exemplo `D:/KazVault` ou `E:/cloudkz`. As credenciais de Gmail/Outlook podem ficar vazias no beta local.
+
+3. Gere servidor, mobile e APK:
+
+```bash
+corepack pnpm beta:build
+```
+
+O APK final deve aparecer em `apps/mobile/dist/kazvault-debug.apk`.
+
+4. Inicie o servidor beta:
+
+```bash
+corepack pnpm beta:server
+```
+
+No Windows, tambem pode abrir `scripts/kazvault-beta-server.bat`.
+
+5. No PC, abra `http://localhost:4577/pair`. A tela mostra a URL/IP do servidor, o QR Code e o link direto `http://localhost:4577/app/kazvault.apk`.
+6. No Android, baixe o APK pela tela de pareamento, permita instalar app de fonte desconhecida se o sistema pedir e abra o KazVault.
+7. No app, entre em `Parear`, toque em `Escanear QR`, permita a camera e aponte para o QR Code do PC.
+8. Na aba `Upload`, selecione um arquivo pequeno de teste e aguarde concluir.
+9. Na aba `Cofre`, toque em atualizar se necessario, baixe/restaure o arquivo e confirme que ele abre igual ao original.
+
+## Checklist de beta
+
+- PC: Windows 10/11, Node.js com Corepack, PNPM via Corepack e acesso de rede local liberado no firewall para a porta `4577`.
+- Build APK: Android SDK e JDK 17/21 configurados. O script tenta detectar SDK/JDK locais antes de chamar o Gradle.
+- Android: aparelho na mesma rede Wi-Fi do PC, Android com WebView/Chrome atualizado, permissao para instalar APK fora da Play Store e permissao de camera para ler QR Code.
+- Portas: `4577` para o backend e pareamento; `5173` apenas para desenvolvimento/PWA do mobile.
+- Permissoes: servidor precisa gravar em `KAZVAULT_STORAGE_DIR`; Android precisa de internet/rede local, camera para QR e seletor de arquivos/downloads do sistema.
+- Arquivos criptografados: ficam em `KAZVAULT_STORAGE_DIR/files/<fileId>/manifest.enc` e `KAZVAULT_STORAGE_DIR/files/<fileId>/chunks/*.chunk.enc`. Padrao: `E:/cloudkz/files`.
+- Metadados locais do servidor: ficam em `%USERPROFILE%/.kazvault` por padrao, ou em `KAZVAULT_APP_DATA_DIR` se configurado.
+- Logs: backend grava em `KAZVAULT_STORAGE_DIR/logs/kazvault.log`; mantenha tambem o terminal do `beta:server` aberto para copiar erros.
+- Confirmacao rapida: `http://localhost:4577/health` responde `ok`, `/pair` mostra QR, `/app/kazvault.apk` baixa o APK, upload fica `Concluido` e o download na aba `Cofre` restaura o arquivo.
+
 ## Instalar
 
 ```bash
@@ -94,6 +147,7 @@ O QR Code da tela `/pair` e temporario, atualiza automaticamente a cada 2 minuto
 - `GET /api/pair/qr`
 - `GET /pair`
 - `GET /pair/qr.png`
+- `GET /app/kazvault.apk`
 - `POST /api/uploads/init`
 - `PATCH /api/uploads/:uploadId/chunk/:index`
 - `POST /api/uploads/:uploadId/complete`

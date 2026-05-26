@@ -726,6 +726,11 @@ textarea:focus {
   margin-bottom: 0;
 }
 
+.pair-server-card a {
+  color: var(--teal-neon);
+  font-weight: 850;
+}
+
 .pair-real-qr-frame {
   display: grid;
   place-items: center;
@@ -920,6 +925,11 @@ textarea:focus {
   min-height: 260px;
   margin: 0;
   background: #020617;
+}
+
+.pair-scanner .qr-reader.active video {
+  width: 100% !important;
+  border-radius: var(--radius-sm);
 }
 
 .advanced-pairing {

@@ -56,7 +56,7 @@ export class BackupService {
       enabled: input.enabled,
       status: "idle",
       lastSyncAt: undefined,
-      nextSyncAt: calculateNextSync(input.syncInterval),
+      nextSyncAt: calculateNextSync(input.syncInterval) ?? undefined,
       protectedFilesCount: 0,
       errorsCount: 0,
       recentErrors: []
@@ -82,7 +82,7 @@ export class BackupService {
     if (patch.syncInterval !== undefined || patch.enabled !== undefined) {
       const isEnabled = patch.enabled !== undefined ? patch.enabled : current.enabled;
       const interval = patch.syncInterval !== undefined ? patch.syncInterval : current.syncInterval;
-      nextSyncAt = isEnabled ? calculateNextSync(interval) : undefined;
+      nextSyncAt = isEnabled ? (calculateNextSync(interval) ?? undefined) : undefined;
     }
 
     return this.repository.update(id, {

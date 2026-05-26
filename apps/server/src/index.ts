@@ -18,6 +18,11 @@ import { LogService } from "./services/logService";
 import { AuthSessionService } from "./services/authSessionService";
 import { PairingService } from "./services/pairingService";
 import { StorageService } from "./services/storageService";
+import { BackupSourcesRepository } from "./repositories/backupSourcesRepository";
+import { BackupService } from "./services/backupService";
+import { registerBackupRoutes } from "./routes/backupRoutes";
+import { ConnectorKeyManager } from "./modules/connectors/credentials/token-vault.service";
+import { VaultIngestService } from "./modules/vault/ingest/vault-ingest.service";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -34,6 +39,12 @@ async function main(): Promise<void> {
   const connectorsRepository = new ConnectorsRepository(db);
   const storageManager = buildStorageManagerModule(db);
   const authSessionService = new AuthSessionService(db, `${storage.metaDir}/auth-secret`);
+
+  const backupSourcesRepository = new BackupSourcesRepository(db);
+  const keyManager = new ConnectorKeyManager(storage, log);
+  const ingestService = new VaultIngestService(storage, filesRepository, chunksRepository, keyManager, storageManager);
+  const backupService = new BackupService(backupSourcesRepository, connectorsRepository, ingestService, db);
+  backupService.startScheduler();
   await storageManager.pools.ensureDefaultPool({
     name: "KazVault Vault",
     rootPath: storage.storageDir,
@@ -117,6 +128,12 @@ async function main(): Promise<void> {
     pairingService,
     authSessionService,
     log
+  });
+
+  await registerBackupRoutes(app, {
+    backupService,
+    pairingService,
+    authSessionService
   });
 
   await app.listen({

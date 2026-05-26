@@ -66,6 +66,12 @@ import {
   importContactsVcf,
   listConnectors,
   listStoragePools,
+  listBackupSources,
+  createBackupSource,
+  updateBackupSource,
+  deleteBackupSource,
+  syncBackupSource,
+  type BackupSource,
   planStorageRebalance,
   planEmailVault,
   listFiles,
@@ -641,6 +647,19 @@ function SecurityPanel(props: {
   );
 }
 
+type QrScanner = {
+  start: (
+    cameraConfigOrId: string | { facingMode: string },
+    configuration: { fps?: number; qrbox?: { width: number; height: number } },
+    onSuccess: (decodedText: string) => void,
+    onError?: () => void
+  ) => Promise<unknown>;
+  stop: () => Promise<void>;
+  clear: () => void;
+};
+
+const PAIR_SCANNER_ELEMENT_ID = "kazvault-pair-scanner";
+
 function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload) => void; onClear: () => void }) {
   const [manualUrl, setManualUrl] = useState(() => {
     return window.location.hostname ? `http://${window.location.hostname}:4577` : "http://";
@@ -649,10 +668,12 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
   const [pairQr, setPairQr] = useState<PairQrResponse | undefined>();
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [qrLoading, setQrLoading] = useState(false);
+  const [scannerActive, setScannerActive] = useState(false);
   const [notice, setNotice] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const nextRefreshAtRef = useRef(0);
   const statusHandledRef = useRef(false);
+  const scannerRef = useRef<QrScanner | undefined>();
 
   async function loadPairQr(fresh = false, baseUrl = manualUrl) {
     setQrLoading(true);
@@ -667,19 +688,100 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
       setManualUrl(nextQr.payload.baseUrl);
       setRemainingSeconds(nextQr.refreshSeconds);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Servidor indisponivel.");
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Nao foi possivel carregar o QR pela URL. No Android, use Escanear QR ou cole o link do PC."
+      );
     } finally {
       setQrLoading(false);
     }
   }
 
   useEffect(() => {
-    if (props.pairing) {
+    if (props.pairing || isLocalAppShell()) {
       return;
     }
 
     void loadPairQr(true);
   }, [props.pairing]);
+
+  const stopScanner = useCallback(() => {
+    const scanner = scannerRef.current;
+    scannerRef.current = undefined;
+
+    if (!scanner) {
+      return;
+    }
+
+    void scanner
+      .stop()
+      .catch(() => undefined)
+      .finally(() => {
+        try {
+          scanner.clear();
+        } catch {
+          return;
+        }
+      });
+  }, []);
+
+  const handleScannedPairing = useCallback((text: string) => {
+    try {
+      const payload = parsePairPayload(text);
+      setNotice("QR lido. Conectando ao PC...");
+      setError(undefined);
+      setScannerActive(false);
+      stopScanner();
+      props.onPair(payload);
+    } catch {
+      setError("QR invalido. Abra /pair no PC e escaneie o QR do KazVault.");
+    }
+  }, [props.onPair, stopScanner]);
+
+  useEffect(() => {
+    if (!scannerActive || props.pairing) {
+      return;
+    }
+
+    let cancelled = false;
+    setError(undefined);
+    setNotice("Permita a camera e aponte para o QR exibido no PC.");
+
+    void import("html5-qrcode")
+      .then(({ Html5Qrcode }) => {
+        if (cancelled) {
+          return undefined;
+        }
+
+        const scanner = new Html5Qrcode(PAIR_SCANNER_ELEMENT_ID) as QrScanner;
+        scannerRef.current = scanner;
+        return scanner.start(
+          { facingMode: "environment" },
+          { fps: 8, qrbox: { width: 240, height: 240 } },
+          (decodedText) => {
+            if (!cancelled) {
+              handleScannedPairing(decodedText);
+            }
+          },
+          () => undefined
+        );
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) {
+          return;
+        }
+
+        setScannerActive(false);
+        scannerRef.current = undefined;
+        setError(reason instanceof Error ? `Camera indisponivel: ${reason.message}` : "Camera indisponivel para escanear o QR.");
+      });
+
+    return () => {
+      cancelled = true;
+      stopScanner();
+    };
+  }, [scannerActive, props.pairing, handleScannedPairing, stopScanner]);
 
   useEffect(() => {
     if (props.pairing || !pairQr) {
@@ -775,20 +877,26 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
       </div>
 
       <div className="pair-hero-copy">
-        <h2>Escaneie no celular</h2>
-        <p>Este QR Code e gerado pelo servidor local</p>
+        <h2>Conecte ao PC</h2>
+        <p>No PC, abra /pair. No Android, toque em Escanear QR e aponte para a tela.</p>
       </div>
 
-      <div className="pair-real-qr-frame">
-        {pairQr ? (
-          <img className="pair-real-qr" src={pairQr.qrDataUrl} alt="QR Code de pareamento KazVault" />
-        ) : (
-          <div className="pair-qr-loading" aria-live="polite">
-            <QrCode size={64} />
-            <span>{qrLoading ? "Gerando QR..." : "QR indisponivel"}</span>
-          </div>
-        )}
-      </div>
+      {scannerActive ? (
+        <div className="pair-scanner">
+          <div id={PAIR_SCANNER_ELEMENT_ID} className="qr-reader active" />
+        </div>
+      ) : (
+        <div className="pair-real-qr-frame">
+          {pairQr ? (
+            <img className="pair-real-qr" src={pairQr.qrDataUrl} alt="QR Code de pareamento KazVault" />
+          ) : (
+            <div className="pair-qr-loading" aria-live="polite">
+              <QrCode size={64} />
+              <span>{qrLoading ? "Gerando QR..." : "Use Escanear QR ou informe a URL do PC"}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {pairQr && (
         <div className="pair-qr-timer">
@@ -807,12 +915,26 @@ function PairPanel(props: { pairing?: PairPayload; onPair: (payload: PairPayload
           <span>{pairQr.payload.serverName}</span>
           <strong>{pairQr.payload.baseUrl}</strong>
           <code>{pairQr.payload.fingerprint}</code>
+          <small>APK Android: <a href={createServerUrl(pairQr.payload.baseUrl, "/app/kazvault.apk")} target="_blank" rel="noreferrer">baixar direto</a></small>
           <small>Expira em {formatDate(pairQr.payload.expiresAt)}</small>
         </div>
       )}
 
       <div className="pair-scan-actions">
-        <button className="primary-button" type="button" onClick={() => void loadPairQr(true)} disabled={qrLoading}>
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() => {
+            setScannerActive((current) => !current);
+            if (scannerActive) {
+              stopScanner();
+            }
+          }}
+        >
+          {scannerActive ? <X size={18} /> : <QrCode size={18} />}
+          {scannerActive ? "Parar camera" : "Escanear QR"}
+        </button>
+        <button className="ghost-button" type="button" onClick={() => void loadPairQr(true)} disabled={qrLoading}>
           <RefreshCcw size={18} />
           Atualizar QR
         </button>
@@ -920,7 +1042,7 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
     "phones": ["11999999999"],
     "emails": ["nome@example.com"]
   }
-]`
+ ]`
   });
   const [calendarForm, setCalendarForm] = useState({
     deviceId: "mobile-device",
@@ -933,7 +1055,7 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
     "end": "2026-05-12T11:00:00Z",
     "location": "Sala A"
   }
-]`
+ ]`
   });
   const [emailVaultForm, setEmailVaultForm] = useState({
     query: "",
@@ -944,6 +1066,18 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
   const [emailVaultPlan, setEmailVaultPlan] = useState<EmailVaultPlan | undefined>();
   const [selectedEmailConnectorId, setSelectedEmailConnectorId] = useState<string | undefined>();
   const [selectedEmailIds, setSelectedEmailIds] = useState<string[]>([]);
+
+  // Backup states
+  const [backupSources, setBackupSources] = useState<BackupSource[]>([]);
+  const [backupForm, setBackupForm] = useState({
+    name: "",
+    type: "local-folder",
+    path: "",
+    syncInterval: "1h",
+    enabled: true
+  });
+  const [editingBackupId, setEditingBackupId] = useState<string | undefined>();
+  const [showBackupForm, setShowBackupForm] = useState(false);
 
   const connectorsByType = useMemo(() => {
     const map = new Map<ConnectorType, ConnectorRecord>();
@@ -981,18 +1115,21 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
       setSelectedEmailConnectorId(undefined);
       setEmailVaultPlan(undefined);
       setSelectedEmailIds([]);
+      setBackupSources([]);
       return;
     }
 
     setError(undefined);
 
     try {
-      const [nextConnectors, nextCapabilities] = await Promise.all([
+      const [nextConnectors, nextCapabilities, nextBackups] = await Promise.all([
         listConnectors(props.pairing),
-        getConnectorCapabilities(props.pairing)
+        getConnectorCapabilities(props.pairing),
+        listBackupSources(props.pairing)
       ]);
       setConnectors(nextConnectors);
       setCapabilities(nextCapabilities);
+      setBackupSources(nextBackups);
       const connectorId = nextConnectorId ?? nextConnectors[0]?.id;
       setSelectedConnectorId(connectorId);
 
@@ -1031,6 +1168,53 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
     } finally {
       setBusyKey(undefined);
     }
+  }
+
+  async function handleCreateBackup() {
+    if (!props.pairing) return;
+    await runBusy("create-backup", async () => {
+      await createBackupSource(props.pairing!, backupForm);
+      setBackupForm({ name: "", type: "local-folder", path: "", syncInterval: "1h", enabled: true });
+      setShowBackupForm(false);
+      setNotice("Fonte de backup automatico criada.");
+      await refresh();
+    });
+  }
+
+  async function handleUpdateBackup(id: string) {
+    if (!props.pairing) return;
+    await runBusy(`update-backup:${id}`, async () => {
+      await updateBackupSource(props.pairing!, id, backupForm);
+      setEditingBackupId(undefined);
+      setShowBackupForm(false);
+      setBackupForm({ name: "", type: "local-folder", path: "", syncInterval: "1h", enabled: true });
+      setNotice("Fonte de backup automatico atualizada.");
+      await refresh();
+    });
+  }
+
+  async function handleDeleteBackup(id: string) {
+    if (!props.pairing) return;
+    if (!window.confirm("Deseja realmente excluir esta fonte de backup?")) return;
+    await runBusy(`delete-backup:${id}`, async () => {
+      await deleteBackupSource(props.pairing!, id);
+      setNotice("Fonte de backup excluida com sucesso.");
+      await refresh();
+    });
+  }
+
+  async function handleSyncBackup(id: string) {
+    if (!props.pairing) return;
+    await runBusy(`sync-backup:${id}`, async () => {
+      setNotice("Sincronizando backup...");
+      const result = await syncBackupSource(props.pairing!, id);
+      if (result.errorsCount > 0) {
+        setError(`Sincronizacao concluida com ${result.errorsCount} erros.`);
+      } else {
+        setNotice("Sincronizacao de backup concluida com sucesso.");
+      }
+      await refresh();
+    });
   }
 
   async function handleGmailConnect() {
@@ -1249,6 +1433,260 @@ function SourcesPanel(props: { pairing?: PairPayload }) {
               <RefreshCcw size={18} />
               Atualizar
             </button>
+          </div>
+
+          <div className="backup-section" style={{ borderBottom: "1px solid var(--border-color)", paddingBottom: "24px", marginBottom: "24px" }}>
+            <div className="backup-section-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <h3 style={{ margin: 0 }}>Backup Automático</h3>
+              <button
+                className="primary-button compact"
+                type="button"
+                onClick={() => {
+                  setBackupForm({ name: "", type: "local-folder", path: "", syncInterval: "1h", enabled: true });
+                  setEditingBackupId(undefined);
+                  setShowBackupForm(!showBackupForm);
+                }}
+              >
+                <Plus size={16} />
+                {showBackupForm ? "Fechar" : "Nova Fonte"}
+              </button>
+            </div>
+
+            {showBackupForm && (
+              <form
+                className="backup-form form-grid"
+                style={{ padding: "16px", background: "var(--card-bg-hover)", borderRadius: "8px", border: "1px solid var(--border-color)", marginBottom: "20px" }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (editingBackupId) {
+                    void handleUpdateBackup(editingBackupId);
+                  } else {
+                    void handleCreateBackup();
+                  }
+                }}
+              >
+                <h4 style={{ margin: "0 0 16px 0" }}>{editingBackupId ? "Editar Fonte de Backup" : "Cadastrar Fonte de Backup"}</h4>
+                
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    Nome da Fonte
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Documentos PC"
+                      value={backupForm.name}
+                      onChange={(e) => setBackupForm({ ...backupForm, name: e.target.value })}
+                    />
+                  </label>
+
+                  <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    Tipo
+                    <select
+                      value={backupForm.type}
+                      onChange={(e) => setBackupForm({ ...backupForm, type: e.target.value })}
+                    >
+                      <option value="local-folder">Pasta local PC</option>
+                      <option value="android-files">Arquivos Android</option>
+                      <option value="connector">Fonte conectada existente</option>
+                    </select>
+                  </label>
+
+                  {backupForm.type === "local-folder" && (
+                    <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      Caminho/Pasta no PC
+                      <input
+                        type="text"
+                        required
+                        placeholder="Ex: C:\Users\elton\Documents"
+                        value={backupForm.path}
+                        onChange={(e) => setBackupForm({ ...backupForm, path: e.target.value })}
+                      />
+                    </label>
+                  )}
+
+                  <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    Intervalo de Sincronização
+                    <select
+                      value={backupForm.syncInterval}
+                      onChange={(e) => setBackupForm({ ...backupForm, syncInterval: e.target.value })}
+                    >
+                      <option value="manual">Manual</option>
+                      <option value="15 min">15 min</option>
+                      <option value="1h">1h</option>
+                      <option value="6h">6h</option>
+                      <option value="diário">Diário</option>
+                    </select>
+                  </label>
+
+                  <label className="connector-toggle" style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
+                    <input
+                      type="checkbox"
+                      checked={backupForm.enabled}
+                      onChange={(e) => setBackupForm({ ...backupForm, enabled: e.target.checked })}
+                    />
+                    Ativo
+                  </label>
+                </div>
+
+                <div className="inline-actions" style={{ marginTop: "16px" }}>
+                  <button className="primary-button" type="submit">
+                    Salvar
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => {
+                      setShowBackupForm(false);
+                      setEditingBackupId(undefined);
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div className="backup-sources-list" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              {backupSources.length === 0 ? (
+                <p className="notice-line">Nenhuma fonte de backup configurada. Toque em 'Nova Fonte' para começar.</p>
+              ) : (
+                backupSources.map((source) => (
+                  <div
+                    className="backup-source-card"
+                    key={source.id}
+                    style={{
+                      padding: "16px",
+                      background: "var(--card-bg)",
+                      border: "1px solid var(--border-color)",
+                      borderRadius: "8px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "12px"
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px" }}>
+                      <div>
+                        <strong style={{ display: "block", fontSize: "16px" }}>{source.name}</strong>
+                        <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                          {source.type === "local-folder"
+                            ? "Pasta local PC"
+                            : source.type === "android-files"
+                            ? "Arquivos Android"
+                            : "Fonte conectada"}
+                        </span>
+                        {source.path && (
+                          <code style={{ display: "block", fontSize: "12px", background: "var(--input-bg)", padding: "2px 6px", borderRadius: "4px", marginTop: "4px", width: "fit-content" }}>
+                            {source.path}
+                          </code>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <span className={`storage-badge ${source.enabled ? "active" : "inactive"}`}>
+                          <span>{source.enabled ? "Ativo" : "Inativo"}</span>
+                        </span>
+                        <span className={`storage-badge ${source.status === "syncing" ? "active" : source.status === "error" ? "degraded" : ""}`}>
+                          <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                            {source.status === "syncing" && <RefreshCcw size={10} className="spin" />}
+                            {source.status === "error" && <AlertTriangle size={10} />}
+                            {source.status === "syncing"
+                              ? "Sincronizando"
+                              : source.status === "error"
+                              ? "Erro"
+                              : "Aguardando"}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      className="backup-source-stats"
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+                        gap: "8px",
+                        padding: "8px 12px",
+                        background: "var(--input-bg)",
+                        borderRadius: "6px",
+                        fontSize: "12px"
+                      }}
+                    >
+                      <div>
+                        <span style={{ color: "var(--text-muted)", display: "block" }}>Arquivos protegidos</span>
+                        <strong>{source.protectedFilesCount}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: "var(--text-muted)", display: "block" }}>Erros</span>
+                        <strong className={source.errorsCount > 0 ? "error-text" : ""}>{source.errorsCount}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: "var(--text-muted)", display: "block" }}>Última sync</span>
+                        <strong>{source.lastSyncAt ? formatDate(source.lastSyncAt) : "Nunca"}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: "var(--text-muted)", display: "block" }}>Próxima sync</span>
+                        <strong>
+                          {source.enabled
+                            ? source.syncInterval === "manual"
+                              ? "Manual"
+                              : source.nextSyncAt
+                              ? formatDate(source.nextSyncAt)
+                              : "Pendente"
+                            : "Desativado"}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {source.recentErrors && source.recentErrors.length > 0 && (
+                      <div style={{ fontSize: "12px", background: "var(--error-bg)", padding: "8px 12px", borderRadius: "6px", borderLeft: "3px solid var(--accent-red)" }}>
+                        <span style={{ fontWeight: "bold", display: "block", marginBottom: "4px" }}>Erros recentes:</span>
+                        <ul style={{ margin: 0, paddingLeft: "16px" }}>
+                          {source.recentErrors.map((err, idx) => (
+                            <li key={idx}><code>{err}</code></li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="inline-actions" style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+                      <button
+                        className="primary-button compact"
+                        type="button"
+                        disabled={source.status === "syncing" || !source.enabled}
+                        onClick={() => void handleSyncBackup(source.id)}
+                      >
+                        <RefreshCcw size={14} />
+                        Sincronizar agora
+                      </button>
+                      <button
+                        className="ghost-button compact"
+                        type="button"
+                        onClick={() => {
+                          setBackupForm({
+                            name: source.name,
+                            type: source.type,
+                            path: source.path || "",
+                            syncInterval: source.syncInterval,
+                            enabled: source.enabled
+                          });
+                          setEditingBackupId(source.id);
+                          setShowBackupForm(true);
+                        }}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="ghost-button compact"
+                        style={{ color: "var(--accent-red)" }}
+                        type="button"
+                        onClick={() => void handleDeleteBackup(source.id)}
+                      >
+                        Excluir
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
 
           <div className="connectors-grid">
@@ -3308,6 +3746,17 @@ function formatDate(value: string): string {
     dateStyle: "short",
     timeStyle: "short"
   }).format(new Date(value));
+}
+
+function createServerUrl(baseUrl: string, path: string): string {
+  const url = new URL(baseUrl);
+  url.pathname = path;
+  url.search = "";
+  return url.toString();
+}
+
+function isLocalAppShell(): boolean {
+  return window.location.hostname === "localhost" && window.location.protocol !== "http:";
 }
 
 function formatCountdown(value: number): string {

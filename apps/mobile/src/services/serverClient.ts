@@ -581,6 +581,66 @@ export async function importCalendarJson(pairing: PairPayload, input: {
   });
 }
 
+export interface BackupSource {
+  id: string;
+  name: string;
+  type: string;
+  path?: string;
+  syncInterval: string;
+  enabled: boolean;
+  status: "idle" | "syncing" | "error";
+  lastSyncAt?: string;
+  nextSyncAt?: string;
+  protectedFilesCount: number;
+  errorsCount: number;
+  recentErrors: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listBackupSources(pairing: PairPayload): Promise<BackupSource[]> {
+  const response = await requestJson<{ sources: BackupSource[] }>(pairing, "/api/backup/sources", {
+    method: "GET"
+  });
+  return response.sources;
+}
+
+export async function createBackupSource(pairing: PairPayload, input: {
+  name: string;
+  type: string;
+  path?: string;
+  syncInterval: string;
+  enabled: boolean;
+}): Promise<BackupSource> {
+  return requestJson<BackupSource>(pairing, "/api/backup/sources", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function updateBackupSource(
+  pairing: PairPayload,
+  id: string,
+  patch: Partial<Omit<BackupSource, "id" | "createdAt" | "updatedAt">>
+): Promise<BackupSource> {
+  return requestJson<BackupSource>(pairing, `/api/backup/sources/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(patch)
+  });
+}
+
+export async function deleteBackupSource(pairing: PairPayload, id: string): Promise<void> {
+  await requestJson(pairing, `/api/backup/sources/${id}`, {
+    method: "DELETE"
+  });
+}
+
+export async function syncBackupSource(pairing: PairPayload, id: string): Promise<BackupSource> {
+  return requestJson<BackupSource>(pairing, `/api/backup/sources/${id}/sync`, {
+    method: "POST"
+  });
+}
+
 export async function listStoragePools(pairing: PairPayload): Promise<StoragePool[]> {
   const response = await requestJson<{ pools: StoragePool[] }>(pairing, "/api/storage/pools", {
     method: "GET"
